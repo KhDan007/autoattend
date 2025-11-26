@@ -10,3 +10,4 @@ data/student_photos/
 *.log
 config.json
 data/encodings/
+data/reports/

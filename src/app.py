@@ -1,3 +1,4 @@
+from src.utils.report_generator import ReportGenerator
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
@@ -16,6 +17,7 @@ class AutoAttendApp:
         self.db = DatabaseManager()
         self.camera = CameraManager()
         self.vision = FaceRecognizer()
+        self.reporter = ReportGenerator(self.db)
 
         # Load initial data
         students = self.db.get_all_students()
@@ -44,6 +46,9 @@ class AutoAttendApp:
             command=self.open_register_window,
         )
         self.btn_register.pack(side=tk.LEFT, padx=10, pady=10)
+
+        self.btn_report = tk.Button(self.btn_frame, text="Export CSV", command=self.generate_report)
+        self.btn_report.pack(side=tk.LEFT, padx=10, pady=10)
 
         self.btn_quit = tk.Button(self.btn_frame, text="Quit", command=self.on_close)
         self.btn_quit.pack(side=tk.RIGHT, padx=10, pady=10)
@@ -123,3 +128,10 @@ class AutoAttendApp:
     def on_close(self):
         self.camera.stop()
         self.root.destroy()
+
+    def generate_report(self):
+        path, msg = self.reporter.export_daily_report()
+        if path:
+            messagebox.showinfo("Report Generated", msg)
+        else:
+            messagebox.showwarning("Report Failed", msg)
