@@ -15,6 +15,12 @@ class CameraManager:
     def start(self):
         if self.running:
             return
+        
+        # --- FIX: Re-initialize camera if it was released ---
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(self.camera_index)
+        # ----------------------------------------------------
+
         self.running = True
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
