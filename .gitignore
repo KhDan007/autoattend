@@ -9,3 +9,4 @@ data/student_photos/
 .idea/
 *.log
 config.json
+data/encodings/
