@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+logs/
+data/student_photos/
+.vscode/
+.idea/
+*.log
+config.json
