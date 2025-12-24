@@ -13,7 +13,7 @@ from src.vision import FaceRecognizer
 class AutoAttendApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("AutoAttend - Intelligent Attendance System")
+        self.root.title("AutoAttend - School Management System")
         self.root.geometry("1200x800")
 
         self.db = DatabaseManager()
@@ -23,13 +23,14 @@ class AutoAttendApp:
         self.load_global_data()
 
         self.current_user = None
-        self.current_course = None
+        self.active_session = None # Dict: {course_id, group_id, etc}
         self.is_session_active = False
         self.student_tree_map = {}
         
-        self.admin_selected_teacher_id = None
-        self.admin_selected_course_id = None
-        self.course_map = {} 
+        # Admin Selection States
+        self.admin_sel_teacher_id = None
+        self.admin_sel_course_id = None
+        self.admin_sel_group_id = None
 
         self._setup_styles()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -39,22 +40,21 @@ class AutoAttendApp:
         style = ttk.Style()
         style.configure("Title.TLabel", font=("Helvetica", 24, "bold"))
         style.configure("Header.TLabel", font=("Helvetica", 14, "bold"))
+        style.configure("SubHeader.TLabel", font=("Helvetica", 11, "bold"))
 
     def load_global_data(self):
         try:
             all_students = self.db.get_all_students()
-            # Only load students who have valid face data (path is not None)
             valid_students = [s for s in all_students if s.encoding_path]
             self.vision.load_encodings(valid_students)
         except Exception as e:
             print(f"Vision Load Warning: {e}")
     
     def _clear_window(self):
-        for widget in self.root.winfo_children():
-            widget.destroy()
+        for widget in self.root.winfo_children(): widget.destroy()
 
     # ==========================================
-    # LOGIN SYSTEM
+    # LOGIN
     # ==========================================
     def show_login_screen(self):
         self.stop_camera() 
@@ -80,40 +80,32 @@ class AutoAttendApp:
         btn_frame = ttk.Frame(login_frame)
         btn_frame.pack(pady=20, fill="x")
         ttk.Button(btn_frame, text="Login", command=self.perform_login).pack(side="left", fill="x", expand=True, padx=5)
-        ttk.Button(btn_frame, text="Register New Teacher", command=self.register_teacher_popup).pack(side="right", fill="x", expand=True, padx=5)
+        ttk.Button(btn_frame, text="Register Teacher", command=self.register_teacher_popup).pack(side="right", fill="x", expand=True, padx=5)
         
         user_entry.focus()
 
     def perform_login(self):
         user = self.username_var.get()
         pwd = self.password_var.get()
-        
         success, data = self.db.login_user(user, pwd)
         if success:
             self.current_user = data
-            if data['is_admin'] == 1:
-                self.build_admin_dashboard()
-            else:
-                self.build_teacher_dashboard()
-        else:
-            messagebox.showerror("Login Failed", "Invalid username or password")
+            if data['is_admin'] == 1: self.build_admin_dashboard()
+            else: self.build_teacher_dashboard()
+        else: messagebox.showerror("Login Failed", "Invalid credentials")
 
     def register_teacher_popup(self):
-        username = simpledialog.askstring("Register", "Choose a Username:")
+        username = simpledialog.askstring("Register", "Username:")
         if not username: return
-        password = simpledialog.askstring("Register", "Choose a Password:", show="*")
+        password = simpledialog.askstring("Register", "Password:", show="*")
         if not password: return
-        fullname = simpledialog.askstring("Register", "Enter Full Name:")
-        
-        success, msg = self.db.register_user(username, password, fullname)
-        if success: messagebox.showinfo("Registration", msg)
-        else: messagebox.showerror("Registration Failed", msg)
+        fullname = simpledialog.askstring("Register", "Full Name:")
+        self.db.register_user(username, password, fullname)
 
     def logout(self):
         self.stop_camera()
         self.current_user = None
-        self.current_course = None
-        if hasattr(self, 'lbl_session_status'): del self.lbl_session_status
+        self.active_session = None
         self.show_login_screen()
 
     # ==========================================
@@ -121,508 +113,468 @@ class AutoAttendApp:
     # ==========================================
     def build_admin_dashboard(self):
         self._clear_window()
-        
-        # Header
         header = ttk.Frame(self.root, padding="10")
         header.pack(fill="x")
         ttk.Label(header, text="ADMIN DASHBOARD", style="Header.TLabel", foreground="red").pack(side="left")
         ttk.Button(header, text="Logout", command=self.logout).pack(side="right")
 
-        # Tabs
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Tab 1: Academic Management
+        self.tab_groups = ttk.Frame(notebook)
+        notebook.add(self.tab_groups, text="1. Groups")
+        self._build_admin_groups_tab(self.tab_groups)
+
+        self.tab_students = ttk.Frame(notebook)
+        notebook.add(self.tab_students, text="2. Students")
+        self._build_admin_students_tab(self.tab_students)
+
         self.tab_academic = ttk.Frame(notebook)
-        notebook.add(self.tab_academic, text="Academic Management")
+        notebook.add(self.tab_academic, text="3. Courses & Timetable")
         self._build_admin_academic_tab(self.tab_academic)
 
-        # Tab 2: Student Management
-        self.tab_students = ttk.Frame(notebook)
-        notebook.add(self.tab_students, text="Student Management")
-        self._build_admin_student_tab(self.tab_students)
+    # --- TAB 1: GROUPS ---
+    def _build_admin_groups_tab(self, parent):
+        frame = ttk.Frame(parent, padding="20")
+        frame.pack(fill="both", expand=True)
 
-    # --- TAB 1: ACADEMIC MANAGEMENT ---
-    def _build_admin_academic_tab(self, parent):
-        main_frame = ttk.Frame(parent, padding="10")
-        main_frame.pack(fill="both", expand=True)
-
-        # Col 1: Teachers
-        col1 = ttk.LabelFrame(main_frame, text="1. Select Teacher", padding="5")
+        col1 = ttk.LabelFrame(frame, text="Existing Groups (e.g., CS-SL-26-1)", padding="10")
         col1.pack(side="left", fill="both", expand=True, padx=5)
 
-        self.tree_teachers = ttk.Treeview(col1, columns=("id", "name"), show="headings", height=15)
-        self.tree_teachers.heading("id", text="ID")
-        self.tree_teachers.heading("name", text="Name")
-        self.tree_teachers.column("id", width=30)
-        self.tree_teachers.pack(fill="both", expand=True)
-        self.tree_teachers.bind("<<TreeviewSelect>>", self.admin_on_teacher_select)
-        self.refresh_teacher_list()
-
-        # Col 2: Courses
-        col2 = ttk.LabelFrame(main_frame, text="2. Manage Courses", padding="5")
-        col2.pack(side="left", fill="both", expand=True, padx=5)
-
-        self.tree_courses = ttk.Treeview(col2, columns=("id", "name"), show="headings", height=10)
-        self.tree_courses.heading("id", text="ID")
-        self.tree_courses.heading("name", text="Course Name")
-        self.tree_courses.column("id", width=30)
-        self.tree_courses.pack(fill="both", expand=True, pady=(0, 5))
-        self.tree_courses.bind("<<TreeviewSelect>>", self.admin_on_course_select)
-
-        ctrl_c = ttk.Frame(col2)
-        ctrl_c.pack(fill="x")
-        ttk.Button(ctrl_c, text="+ Add Course", command=self.admin_add_course).pack(side="left", fill="x", expand=True)
-        ttk.Button(ctrl_c, text="- Delete Course", command=self.admin_delete_course).pack(side="right", fill="x", expand=True)
-
-        # Col 3: Timetable
-        col3 = ttk.LabelFrame(main_frame, text="3. Manage Timetable", padding="5")
-        col3.pack(side="left", fill="both", expand=True, padx=5)
-
-        self.tree_timetable = ttk.Treeview(col3, columns=("day", "time"), show="headings", height=10)
-        self.tree_timetable.heading("day", text="Day")
-        self.tree_timetable.heading("time", text="Time")
-        self.tree_timetable.pack(fill="both", expand=True, pady=(0, 5))
-
-        ctrl_t = ttk.Frame(col3)
-        ctrl_t.pack(fill="x")
+        self.tree_groups = ttk.Treeview(col1, columns=("id", "name"), show="headings")
+        self.tree_groups.heading("id", text="ID")
+        self.tree_groups.heading("name", text="Group Name")
+        self.tree_groups.column("id", width=50)
+        self.tree_groups.pack(fill="both", expand=True)
         
-        self.var_day = tk.StringVar()
-        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        self.combo_day = ttk.Combobox(ctrl_t, textvariable=self.var_day, values=days, state="readonly", width=10)
-        self.combo_day.set("Monday")
-        self.combo_day.grid(row=0, column=0, padx=2)
-
-        self.var_start = tk.StringVar(value="09:00")
-        ttk.Entry(ctrl_t, textvariable=self.var_start, width=6).grid(row=0, column=1, padx=2)
-        self.var_end = tk.StringVar(value="10:00")
-        ttk.Entry(ctrl_t, textvariable=self.var_end, width=6).grid(row=0, column=2, padx=2)
-
-        ttk.Button(ctrl_t, text="Add Slot", command=self.admin_add_slot).grid(row=1, column=0, columnspan=3, sticky="ew", pady=5)
-        ttk.Button(ctrl_t, text="Delete Slot", command=self.admin_delete_slot).grid(row=2, column=0, columnspan=3, sticky="ew")
-
-    # --- TAB 2: STUDENT MANAGEMENT ---
-    def _build_admin_student_tab(self, parent):
-        main_frame = ttk.Frame(parent, padding="10")
-        main_frame.pack(fill="both", expand=True)
+        btn_frame = ttk.Frame(col1)
+        btn_frame.pack(fill="x", pady=10)
+        ttk.Button(btn_frame, text="Create New Group", command=self.admin_add_group).pack(side="left", fill="x", expand=True)
+        ttk.Button(btn_frame, text="Delete Selected", command=self.admin_delete_group).pack(side="right", fill="x", expand=True)
         
-        # Left: Student List
-        list_frame = ttk.LabelFrame(main_frame, text="All Students", padding="5")
+        self.refresh_group_list()
+
+    def refresh_group_list(self):
+        for i in self.tree_groups.get_children(): self.tree_groups.delete(i)
+        for g in self.db.get_all_groups():
+            self.tree_groups.insert("", "end", values=(g.id, g.name))
+
+    def admin_add_group(self):
+        name = simpledialog.askstring("New Group", "Group Name (e.g., CS-SL-26-1):")
+        if name:
+            if self.db.add_group(name): self.refresh_group_list()
+            else: messagebox.showerror("Error", "Group exists or invalid.")
+
+    def admin_delete_group(self):
+        sel = self.tree_groups.selection()
+        if not sel: return
+        gid = self.tree_groups.item(sel[0])['values'][0]
+        if messagebox.askyesno("Confirm", "Delete Group? All students in it will be deleted."):
+            self.db.delete_group(gid)
+            self.refresh_group_list()
+            self.refresh_student_list() # Updates other tab
+
+    # --- TAB 2: STUDENTS ---
+    def _build_admin_students_tab(self, parent):
+        frame = ttk.Frame(parent, padding="10")
+        frame.pack(fill="both", expand=True)
+        
+        # List
+        list_frame = ttk.LabelFrame(frame, text="Student Registry", padding="5")
         list_frame.pack(side="left", fill="both", expand=True)
 
-        cols = ("roll", "name", "status")
+        cols = ("roll", "name", "group", "status")
         self.tree_students = ttk.Treeview(list_frame, columns=cols, show="headings")
         self.tree_students.heading("roll", text="ID")
-        self.tree_students.heading("name", text="Full Name")
-        self.tree_students.heading("status", text="Face Status")
-        
-        self.tree_students.column("roll", width=80)
-        self.tree_students.column("name", width=200)
-        self.tree_students.column("status", width=120)
-        
-        # Tags for status color
+        self.tree_students.heading("name", text="Name")
+        self.tree_students.heading("group", text="Group")
+        self.tree_students.heading("status", text="Face Data")
+        self.tree_students.column("roll", width=60)
         self.tree_students.tag_configure("registered", foreground="green")
         self.tree_students.tag_configure("unregistered", foreground="red")
         
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree_students.yview)
-        self.tree_students.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        sb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree_students.yview)
+        self.tree_students.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree_students.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        # Controls
+        ctrl = ttk.Frame(frame, padding="10")
+        ctrl.pack(side="right", fill="y")
+        ttk.Label(ctrl, text="Student Actions", style="SubHeader.TLabel").pack(pady=10)
+        
+        # We need a ComboBox for Groups here
+        ttk.Label(ctrl, text="Assign to Group:").pack(anchor="w")
+        self.var_student_group_assign = tk.StringVar()
+        self.combo_student_group = ttk.Combobox(ctrl, textvariable=self.var_student_group_assign, state="readonly")
+        self.combo_student_group.pack(fill="x", pady=(0, 10))
+
+        ttk.Button(ctrl, text="Add Student (Text)", command=self.admin_add_student).pack(fill="x", pady=5)
+        ttk.Button(ctrl, text="Upload/Update Face", command=self.admin_upload_face).pack(fill="x", pady=5)
+        ttk.Separator(ctrl, orient="horizontal").pack(fill="x", pady=10)
+        ttk.Button(ctrl, text="Delete Student", command=self.admin_delete_student).pack(fill="x", pady=5)
+        
         self.refresh_student_list()
 
-        # Right: Controls
-        ctrl_frame = ttk.Frame(main_frame, padding="10")
-        ctrl_frame.pack(side="right", fill="y", padx=10)
-
-        ttk.Label(ctrl_frame, text="Actions", style="SubHeader.TLabel").pack(pady=10)
-        
-        ttk.Button(ctrl_frame, text="Add Student (Text Only)", command=self.admin_add_student_text).pack(fill="x", pady=5)
-        ttk.Button(ctrl_frame, text="Upload/Update Photos", command=self.admin_upload_face).pack(fill="x", pady=5)
-        ttk.Separator(ctrl_frame, orient="horizontal").pack(fill="x", pady=15)
-        ttk.Button(ctrl_frame, text="Delete Student", command=self.admin_delete_student).pack(fill="x", pady=5)
-
-    # --- Student Tab Logic ---
     def refresh_student_list(self):
-        for item in self.tree_students.get_children():
-            self.tree_students.delete(item)
+        for i in self.tree_students.get_children(): self.tree_students.delete(i)
         
-        students = self.db.get_all_students()
-        for s in students:
-            # Check if encoding path exists
+        # Populate Combobox
+        groups = self.db.get_all_groups()
+        g_names = [g.name for g in groups]
+        self.combo_student_group['values'] = g_names
+        if g_names: self.combo_student_group.current(0)
+
+        for s in self.db.get_all_students():
             status = "Registered" if s.encoding_path else "Unregistered"
             tag = "registered" if s.encoding_path else "unregistered"
-            
-            self.tree_students.insert("", "end", values=(s.roll_number, s.name, status), tags=(tag,))
+            self.tree_students.insert("", "end", values=(s.roll_number, s.name, s.group_name, status), tags=(tag,))
 
-    def admin_add_student_text(self):
-        # Adds student without photos
+    def admin_add_student(self):
+        g_name = self.var_student_group_assign.get()
+        if not g_name:
+            messagebox.showerror("Error", "Create and select a group first.")
+            return
+        
+        # Find group ID
+        groups = self.db.get_all_groups()
+        gid = next((g.id for g in groups if g.name == g_name), None)
+
         next_roll = self.db.generate_next_roll_number()
-        name = simpledialog.askstring("Add Student", f"Auto-ID: {next_roll}\nEnter Student Name:")
-        if not name: return
-
-        if self.db.add_student_placeholder(name, next_roll):
-            self.refresh_student_list()
-            messagebox.showinfo("Success", f"Added {name} (Unregistered)")
-        else:
-            messagebox.showerror("Error", "Database error.")
+        name = simpledialog.askstring("Add Student", f"Auto-ID: {next_roll}\nGroup: {g_name}\nName:")
+        if name:
+            if self.db.add_student(name, next_roll, gid):
+                self.refresh_student_list()
+            else: messagebox.showerror("Error", "DB Error")
 
     def admin_upload_face(self):
-        selected = self.tree_students.selection()
-        if not selected:
-            messagebox.showwarning("Warning", "Select a student first.")
-            return
-        
-        item = self.tree_students.item(selected[0])
-        roll = item['values'][0]
-        name = item['values'][1]
-        
-        # Get DB ID for this student
-        students = self.db.get_all_students()
-        target_student = next((s for s in students if str(s.roll_number) == str(roll)), None)
-        if not target_student: return
+        sel = self.tree_students.selection()
+        if not sel: return
+        item = self.tree_students.item(sel[0])
+        roll, name = item['values'][0], item['values'][1]
 
+        # Get Student ID
+        all_s = self.db.get_all_students()
+        student = next((s for s in all_s if str(s.roll_number) == str(roll)), None)
+        
         files = filedialog.askopenfilenames(title=f"Photos for {name}", filetypes=[("Images", "*.jpg *.png *.jpeg")])
-        if not files: return
-
-        path = self.vision.register_faces(files, name, str(roll))
-        if path:
-            self.db.update_student_face(target_student.id, path)
-            self.load_global_data() # Reload face engine
-            self.refresh_student_list()
-            messagebox.showinfo("Success", f"Face data updated for {name}")
-        else:
-            messagebox.showerror("Error", "No faces detected in images.")
+        if files and student:
+            path = self.vision.register_faces(files, name, str(roll))
+            if path:
+                self.db.update_student_face(student.id, path)
+                self.load_global_data()
+                self.refresh_student_list()
+                messagebox.showinfo("Success", "Face updated.")
+            else: messagebox.showerror("Error", "No faces found.")
 
     def admin_delete_student(self):
-        selected = self.tree_students.selection()
-        if not selected: return
-        
-        item = self.tree_students.item(selected[0])
-        roll = item['values'][0]
-        name = item['values'][1]
-        
-        if messagebox.askyesno("Confirm Delete", f"Delete student {name} ({roll})?\nThis removes all attendance data."):
-            # Find ID
-            students = self.db.get_all_students()
-            target = next((s for s in students if str(s.roll_number) == str(roll)), None)
-            if target:
-                self.db.delete_student(target.id)
-                self.load_global_data() # Reload in case we deleted face data
-                self.refresh_student_list()
+        sel = self.tree_students.selection()
+        if not sel: return
+        roll = self.tree_students.item(sel[0])['values'][0]
+        all_s = self.db.get_all_students()
+        student = next((s for s in all_s if str(s.roll_number) == str(roll)), None)
+        if student and messagebox.askyesno("Confirm", "Delete student?"):
+            self.db.delete_student(student.id)
+            self.refresh_student_list()
 
-    # --- Academic Tab Logic (Same as before) ---
+    # --- TAB 3: ACADEMIC (Timetable links Groups now) ---
+    def _build_admin_academic_tab(self, parent):
+        frame = ttk.Frame(parent, padding="10")
+        frame.pack(fill="both", expand=True)
+
+        # Teachers
+        col1 = ttk.LabelFrame(frame, text="1. Teacher", padding="5")
+        col1.pack(side="left", fill="both", expand=True)
+        self.tree_teachers = ttk.Treeview(col1, columns=("id", "name"), show="headings", height=10)
+        self.tree_teachers.heading("id", text="ID"); self.tree_teachers.heading("name", text="Name")
+        self.tree_teachers.column("id", width=30)
+        self.tree_teachers.pack(fill="both", expand=True)
+        self.tree_teachers.bind("<<TreeviewSelect>>", self.on_teacher_sel)
+        
+        # Courses
+        col2 = ttk.LabelFrame(frame, text="2. Course", padding="5")
+        col2.pack(side="left", fill="both", expand=True)
+        self.tree_courses = ttk.Treeview(col2, columns=("id", "name"), show="headings", height=10)
+        self.tree_courses.heading("id", text="ID"); self.tree_courses.heading("name", text="Name")
+        self.tree_courses.column("id", width=30)
+        self.tree_courses.pack(fill="both", expand=True, pady=(0,5))
+        self.tree_courses.bind("<<TreeviewSelect>>", self.on_course_sel)
+        ttk.Button(col2, text="+ Add Course", command=self.add_course_popup).pack(fill="x")
+
+        # Timetable
+        col3 = ttk.LabelFrame(frame, text="3. Timetable (Assign Group)", padding="5")
+        col3.pack(side="left", fill="both", expand=True)
+        self.tree_timetable = ttk.Treeview(col3, columns=("day", "time", "group"), show="headings", height=10)
+        self.tree_timetable.heading("day", text="Day")
+        self.tree_timetable.heading("time", text="Time")
+        self.tree_timetable.heading("group", text="Group") # New Column
+        self.tree_timetable.column("day", width=50); self.tree_timetable.column("group", width=80)
+        self.tree_timetable.pack(fill="both", expand=True, pady=(0,5))
+
+        # Timetable Controls
+        t_ctrl = ttk.Frame(col3)
+        t_ctrl.pack(fill="x")
+        
+        ttk.Label(t_ctrl, text="Group:").grid(row=0, column=0, sticky="w")
+        self.var_tt_group = tk.StringVar()
+        self.combo_tt_group = ttk.Combobox(t_ctrl, textvariable=self.var_tt_group, state="readonly", width=12)
+        self.combo_tt_group.grid(row=0, column=1, padx=2)
+        
+        self.combo_tt_day = ttk.Combobox(t_ctrl, values=["Monday","Tuesday","Wednesday","Thursday","Friday"], state="readonly", width=10)
+        self.combo_tt_day.current(0)
+        self.combo_tt_day.grid(row=1, column=0, padx=2, pady=2)
+        
+        self.ent_start = ttk.Entry(t_ctrl, width=6); self.ent_start.insert(0,"09:00")
+        self.ent_start.grid(row=1, column=1, padx=2)
+        self.ent_end = ttk.Entry(t_ctrl, width=6); self.ent_end.insert(0,"10:00")
+        self.ent_end.grid(row=1, column=2, padx=2)
+
+        ttk.Button(t_ctrl, text="Assign Slot", command=self.add_slot).grid(row=2, column=0, columnspan=3, sticky="ew", pady=5)
+        ttk.Button(t_ctrl, text="Delete Slot", command=self.del_slot).grid(row=3, column=0, columnspan=3, sticky="ew")
+
+        self.refresh_teacher_list()
+
     def refresh_teacher_list(self):
-        for item in self.tree_teachers.get_children(): self.tree_teachers.delete(item)
-        teachers = self.db.get_all_teachers()
-        for t in teachers: self.tree_teachers.insert("", "end", values=(t['id'], t['full_name']))
+        for i in self.tree_teachers.get_children(): self.tree_teachers.delete(i)
+        for t in self.db.get_all_teachers(): self.tree_teachers.insert("", "end", values=(t['id'], t['full_name']))
 
-    def admin_on_teacher_select(self, event):
-        selected = self.tree_teachers.selection()
-        if not selected: return
-        item = self.tree_teachers.item(selected[0])
-        self.admin_selected_teacher_id = item['values'][0]
-        self.admin_refresh_courses()
-        for i in self.tree_timetable.get_children(): self.tree_timetable.delete(i)
-        self.admin_selected_course_id = None
+    def on_teacher_sel(self, e):
+        sel = self.tree_teachers.selection()
+        if not sel: return
+        self.admin_sel_teacher_id = self.tree_teachers.item(sel[0])['values'][0]
+        self.refresh_courses()
+        self.clear_timetable_view()
 
-    def admin_refresh_courses(self):
-        for item in self.tree_courses.get_children(): self.tree_courses.delete(item)
-        if not self.admin_selected_teacher_id: return
-        courses = self.db.get_courses_for_teacher(self.admin_selected_teacher_id)
-        for c in courses:
+    def refresh_courses(self):
+        for i in self.tree_courses.get_children(): self.tree_courses.delete(i)
+        if not self.admin_sel_teacher_id: return
+        for c in self.db.get_courses_for_teacher(self.admin_sel_teacher_id):
             self.tree_courses.insert("", "end", values=(c.id, c.name))
 
-    def admin_on_course_select(self, event):
-        selected = self.tree_courses.selection()
-        if not selected: return
-        item = self.tree_courses.item(selected[0])
-        self.admin_selected_course_id = item['values'][0]
-        self.admin_refresh_timetable()
+    def add_course_popup(self):
+        if not self.admin_sel_teacher_id: return
+        name = simpledialog.askstring("New Course", "Name:")
+        if name:
+            self.db.add_course(name, self.admin_sel_teacher_id)
+            self.refresh_courses()
 
-    def admin_refresh_timetable(self):
-        for item in self.tree_timetable.get_children(): self.tree_timetable.delete(item)
-        if not self.admin_selected_course_id: return
-        slots = self.db.get_timetable_for_course(self.admin_selected_course_id)
+    def on_course_sel(self, e):
+        sel = self.tree_courses.selection()
+        if not sel: return
+        self.admin_sel_course_id = self.tree_courses.item(sel[0])['values'][0]
+        self.refresh_timetable()
+        
+        # Populate Group Combo for Timetable
+        groups = self.db.get_all_groups()
+        self.combo_tt_group['values'] = [g.name for g in groups]
+        if groups: self.combo_tt_group.current(0)
+
+    def refresh_timetable(self):
+        self.clear_timetable_view()
+        if not self.admin_sel_course_id: return
+        slots = self.db.get_timetable_for_course(self.admin_sel_course_id)
         days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         for s in slots:
-            day_str = days[s['day']]
-            time_str = f"{s['start']} - {s['end']}"
-            self.tree_timetable.insert("", "end", iid=s['id'], values=(day_str, time_str))
+            self.tree_timetable.insert("", "end", iid=s.id, values=(days[s.day_of_week], f"{s.start_time}-{s.end_time}", s.group_name))
 
-    def admin_add_course(self):
-        if not self.admin_selected_teacher_id:
-            messagebox.showwarning("Warning", "Select a teacher first.")
+    def clear_timetable_view(self):
+        for i in self.tree_timetable.get_children(): self.tree_timetable.delete(i)
+
+    def add_slot(self):
+        if not self.admin_sel_course_id: return
+        g_name = self.var_tt_group.get()
+        if not g_name:
+            messagebox.showerror("Error", "Select a group.")
             return
-        name = simpledialog.askstring("New Course", "Course Name (e.g. Intro to AI):")
-        if not name: return
-        self.db.add_course(name, self.admin_selected_teacher_id)
-        self.admin_refresh_courses()
+        
+        # Get Group ID
+        groups = self.db.get_all_groups()
+        gid = next((g.id for g in groups if g.name == g_name), None)
+        
+        day = self.combo_tt_day.current()
+        start, end = self.ent_start.get(), self.ent_end.get()
+        self.db.add_timetable_slot(self.admin_sel_course_id, gid, day, start, end)
+        self.refresh_timetable()
 
-    def admin_delete_course(self):
-        if not self.admin_selected_course_id: return
-        if messagebox.askyesno("Confirm", "Delete this course?"):
-            self.db.delete_course(self.admin_selected_course_id)
-            self.admin_refresh_courses()
-            self.admin_selected_course_id = None
-            for i in self.tree_timetable.get_children(): self.tree_timetable.delete(i)
-
-    def admin_add_slot(self):
-        if not self.admin_selected_course_id:
-            messagebox.showwarning("Warning", "Select a course first.")
-            return
-        day_idx = self.combo_day.current()
-        start = self.var_start.get()
-        end = self.var_end.get()
-        try:
-            datetime.strptime(start, "%H:%M")
-            datetime.strptime(end, "%H:%M")
-        except ValueError:
-            messagebox.showerror("Error", "Use HH:MM format (24hr).")
-            return
-        self.db.add_timetable_slot(self.admin_selected_course_id, day_idx, start, end)
-        self.admin_refresh_timetable()
-
-    def admin_delete_slot(self):
-        selected = self.tree_timetable.selection()
-        if not selected: return
-        slot_id = selected[0]
-        self.db.delete_timetable_slot(slot_id)
-        self.admin_refresh_timetable()
+    def del_slot(self):
+        sel = self.tree_timetable.selection()
+        if sel:
+            self.db.delete_timetable_slot(sel[0])
+            self.refresh_timetable()
 
     # ==========================================
-    # TEACHER DASHBOARD (Same as before)
+    # TEACHER DASHBOARD (Auto-Detect Group)
     # ==========================================
     def build_teacher_dashboard(self):
         self._clear_window()
         
-        header_frame = ttk.Frame(self.root, padding="10")
-        header_frame.pack(side="top", fill="x")
-        user_text = f"Teacher: {self.current_user['full_name']}"
-        ttk.Label(header_frame, text=user_text, style="Header.TLabel").pack(side="left")
-        ttk.Button(header_frame, text="Logout", command=self.logout).pack(side="right")
+        # Header
+        h_frame = ttk.Frame(self.root, padding="10")
+        h_frame.pack(side="top", fill="x")
+        ttk.Label(h_frame, text=f"Teacher: {self.current_user['full_name']}", style="Header.TLabel").pack(side="left")
+        ttk.Button(h_frame, text="Logout", command=self.logout).pack(side="right")
 
-        self.paned_window = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        self.paned_window.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.left_panel = ttk.Frame(self.paned_window, padding=5)
-        self.right_panel = ttk.Frame(self.paned_window, padding=5, relief=tk.RIDGE)
-        self.paned_window.add(self.left_panel, weight=2)
-        self.paned_window.add(self.right_panel, weight=1)
+        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        left = ttk.Frame(paned, padding=5)
+        right = ttk.Frame(paned, padding=5, relief=tk.RIDGE)
+        paned.add(left, weight=2)
+        paned.add(right, weight=1)
 
-        self.setup_left_panel()
-        self.setup_right_panel()
-        self.setup_status_bar()
-        self.update_video_loop()
-
-    def setup_left_panel(self):
-        video_frame = ttk.LabelFrame(self.left_panel, text="Live Camera Feed", padding=5)
-        video_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        self.video_label = ttk.Label(video_frame)
+        # Camera
+        vid_frame = ttk.LabelFrame(left, text="Live Camera", padding=5)
+        vid_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.video_label = ttk.Label(vid_frame)
         self.video_label.pack(fill=tk.BOTH, expand=True)
-        placeholder = ImageTk.PhotoImage(Image.new("RGB", (640, 480), color="gray"))
-        self.video_label.configure(image=placeholder)
-        self.video_label.image = placeholder
+        self.video_label.image = ImageTk.PhotoImage(Image.new("RGB", (640, 480), "gray"))
+        self.video_label.configure(image=self.video_label.image)
 
-        controls_frame = ttk.Frame(self.left_panel)
-        controls_frame.pack(fill=tk.X, pady=5)
-        self.btn_start = ttk.Button(controls_frame, text="▶ Start Camera", command=self.start_camera)
+        btn_box = ttk.Frame(left)
+        btn_box.pack(fill=tk.X)
+        self.btn_start = ttk.Button(btn_box, text="▶ Start Session", command=self.start_session_camera)
         self.btn_start.pack(side=tk.LEFT, padx=5)
-        self.btn_stop = ttk.Button(controls_frame, text="■ Stop Camera", command=self.stop_camera, state="disabled")
+        self.btn_stop = ttk.Button(btn_box, text="■ Stop", command=self.stop_camera, state="disabled")
         self.btn_stop.pack(side=tk.LEFT, padx=5)
 
-    def setup_right_panel(self):
-        course_frame = ttk.LabelFrame(self.right_panel, text="Course Selection", padding=10)
-        course_frame.pack(fill=tk.X, pady=(0, 15))
-
-        teacher_id = self.current_user['id']
-        self.courses = self.db.get_courses_for_teacher(teacher_id)
+        # Session Info
+        info_frame = ttk.LabelFrame(right, text="Current Session", padding=10)
+        info_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.course_map = {c.name: c for c in self.courses}
-        course_names = list(self.course_map.keys())
+        self.lbl_course = ttk.Label(info_frame, text="Course: --")
+        self.lbl_course.pack(anchor="w")
+        self.lbl_group = ttk.Label(info_frame, text="Group: --")
+        self.lbl_group.pack(anchor="w")
+        self.lbl_status = ttk.Label(info_frame, text="Status: Inactive", foreground="red")
+        self.lbl_status.pack(anchor="w")
 
-        self.course_var = tk.StringVar()
-        self.course_combo = ttk.Combobox(course_frame, textvariable=self.course_var, values=course_names, state="readonly")
-        self.course_combo.pack(fill=tk.X)
-        self.course_combo.bind("<<ComboboxSelected>>", self.on_course_selected)
+        # Check Schedule Button
+        ttk.Button(info_frame, text="⟳ Refresh Schedule", command=self.check_schedule).pack(pady=5, fill="x")
 
-        self.session_info_frame = ttk.LabelFrame(self.right_panel, text="Session Info", padding=10)
-        self.session_info_frame.pack(fill=tk.X, pady=(0, 15))
-        self.lbl_session_course = ttk.Label(self.session_info_frame, text="Course: None")
-        self.lbl_session_course.pack(anchor=tk.W)
-        today_str = datetime.now().strftime("%B %d, %Y")
-        ttk.Label(self.session_info_frame, text=f"Date: {today_str}").pack(anchor=tk.W)
-        self.lbl_session_status = ttk.Label(self.session_info_frame, text="Status: Inactive", foreground="red")
-        self.lbl_session_status.pack(anchor=tk.W)
-
-        list_frame = ttk.LabelFrame(self.right_panel, text="Attendance List", padding=(5, 5, 5, 0))
+        # Attendance List
+        list_frame = ttk.LabelFrame(right, text="Attendance", padding=(5,5,5,0))
         list_frame.pack(fill=tk.BOTH, expand=True)
-        columns = ("name", "status")
-        self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="browse")
-        self.tree.heading("name", text="Student Name")
-        self.tree.heading("status", text="Status")
-        self.tree.column("name", width=200)
-        self.tree.column("status", width=100, anchor=tk.CENTER)
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.tree.tag_configure("present", foreground="green", background="#E8F5E9")
-        self.tree.tag_configure("absent", foreground="red", background="#FFEBEE")
+        self.tree_att = ttk.Treeview(list_frame, columns=("name", "status"), show="headings")
+        self.tree_att.heading("name", text="Student"); self.tree_att.heading("status", text="Status")
+        self.tree_att.column("status", width=80, anchor="center")
+        self.tree_att.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree_att.tag_configure("present", foreground="green", background="#E8F5E9")
 
-        action_frame = ttk.Frame(self.right_panel, padding=(0, 15, 0, 0))
-        action_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        ttk.Button(action_frame, text="Register Student", command=self.open_register_window).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
-        ttk.Button(action_frame, text="Export CSV", command=self.export_current_session).pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=2)
+        # Action
+        ttk.Button(right, text="Export CSV", command=self.export_csv).pack(fill="x", pady=10)
 
-        active_course = self.db.get_active_course_for_teacher(teacher_id)
-        if active_course:
-            for name, course_obj in self.course_map.items():
-                if course_obj.id == active_course.id:
-                    self.course_combo.set(name)
-                    self.current_course = course_obj
-                    self.lbl_session_course.config(text=f"Course: {name} (Auto-Selected)")
-                    self.refresh_attendance_list()
-                    break
+        # Initial Check
+        self.check_schedule()
+        self.update_video_loop()
+
+    def check_schedule(self):
+        # Auto-detect what the teacher should be teaching right now
+        session = self.db.get_active_session_info(self.current_user['id'])
+        
+        if session:
+            self.active_session = session
+            self.lbl_course.config(text=f"Course: {session['course_name']}")
+            self.lbl_group.config(text=f"Group: {session['group_name']}")
+            self.lbl_status.config(text="Status: Ready", foreground="orange")
+            self.refresh_att_list()
         else:
-            if not self.courses:
-                self.course_combo.set("No courses assigned")
+            self.active_session = None
+            self.lbl_course.config(text="Course: No class scheduled")
+            self.lbl_group.config(text="Group: --")
+            self.lbl_status.config(text="Status: Off Duty", foreground="gray")
+            for i in self.tree_att.get_children(): self.tree_att.delete(i)
 
-    def setup_status_bar(self):
-        self.status_bar = ttk.Frame(self.root, relief=tk.SUNKEN, padding=2)
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-        self.status_lbl = ttk.Label(self.status_bar, text="System Ready")
-        self.status_lbl.pack(side=tk.LEFT)
+    def refresh_att_list(self):
+        for i in self.tree_att.get_children(): self.tree_att.delete(i)
+        self.student_tree_map.clear()
+        
+        if not self.active_session: return
+        
+        gid = self.active_session['group_id']
+        cid = self.active_session['course_id']
+        
+        students = self.db.get_students_by_group(gid)
+        att_data = self.db.get_todays_attendance(cid, gid)
 
-    def start_camera(self):
+        for s in students:
+            status = att_data.get(s.id, "ABSENT")
+            tag = "present" if status == "PRESENT" else "absent"
+            iid = self.tree_att.insert("", "end", values=(s.name, status), tags=(tag,))
+            self.student_tree_map[s.id] = iid
+
+    def start_session_camera(self):
+        if not self.active_session:
+            messagebox.showwarning("No Class", "No class is scheduled for right now.")
+            return
+        
         try:
             self.camera.start()
             self.btn_start["state"] = "disabled"
             self.btn_stop["state"] = "normal"
             self.is_session_active = True
-            if hasattr(self, 'lbl_session_status'):
-                self.lbl_session_status.config(text="Status: Active Session", foreground="green")
-            if hasattr(self, 'status_lbl'):
-                self.status_lbl.config(text="Camera Started")
-        except Exception as e:
-            messagebox.showerror("Camera Error", f"Failed to start camera.\nError: {e}")
+            self.lbl_status.config(text="Status: Active Session", foreground="green")
+        except Exception as e: messagebox.showerror("Error", str(e))
 
     def stop_camera(self):
+        # Always stop the hardware logic
         self.camera.stop()
         self.is_session_active = False
-        try:
-            if hasattr(self, 'btn_start'): self.btn_start["state"] = "normal"
-            if hasattr(self, 'btn_stop'): self.btn_stop["state"] = "disabled"
-            if hasattr(self, 'lbl_session_status'):
-                self.lbl_session_status.config(text="Status: Inactive", foreground="red")
-            if hasattr(self, 'status_lbl'):
-                self.status_lbl.config(text="Camera Stopped")
+        
+        # Only try to update the buttons/labels if they actually exist
+        # (This prevents the crash during the login screen)
+        if hasattr(self, 'btn_start'):
+            self.btn_start["state"] = "normal"
+            self.btn_stop["state"] = "disabled"
+            self.lbl_status.config(text="Status: Paused", foreground="orange")
+            # Reset placeholder image
             if hasattr(self, 'video_label'):
-                placeholder = ImageTk.PhotoImage(Image.new("RGB", (640, 480), color="gray"))
-                self.video_label.configure(image=placeholder)
-                self.video_label.image = placeholder
-        except:
-            pass 
-
-    def on_course_selected(self, event):
-        name_selected = self.course_var.get()
-        if not name_selected: return
-        self.current_course = self.course_map.get(name_selected)
-        if self.current_course:
-            self.lbl_session_course.config(text=f"Course: {self.current_course.name}")
-            self.refresh_attendance_list()
-
-    def refresh_attendance_list(self):
-        for item in self.tree.get_children(): self.tree.delete(item)
-        self.student_tree_map.clear()
-        if not self.current_course: return
-        students = self.db.get_students_for_course(self.current_course.id)
-        attendance_today = self.db.get_todays_attendance(self.current_course.id)
-        for student in students:
-            status = attendance_today.get(student.id, "ABSENT")
-            tag = "present" if status == "PRESENT" else "absent"
-            tree_id = self.tree.insert("", tk.END, values=(student.name, status), tags=(tag,))
-            self.student_tree_map[student.id] = tree_id
+                self.video_label.configure(image=self.video_label.image)
 
     def update_video_loop(self):
-        if not self.current_user or self.current_user.get('is_admin') == 1:
-            return 
-        frame_rgb = self.camera.get_frame()
-        if frame_rgb is not None:
-            detections = self.vision.detect_and_identify(frame_rgb)
-            frame_draw = frame_rgb.copy()
-            for student_id, name, (top, right, bottom, left) in detections:
-                color = (0, 255, 0) if student_id else (255, 0, 0)
-                cv2.rectangle(frame_draw, (left, top), (right, bottom), color, 2)
-                cv2.rectangle(frame_draw, (left, bottom - 30), (right, bottom), color, cv2.FILLED)
-                cv2.putText(frame_draw, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
+        if not self.current_user or self.current_user.get('is_admin') == 1: return
+        
+        frame = self.camera.get_frame()
+        if frame is not None:
+            # Detection
+            dets = self.vision.detect_and_identify(frame)
+            draw = frame.copy()
+            
+            for sid, name, (t, r, b, l) in dets:
+                color = (0, 255, 0) if sid else (255, 0, 0)
+                cv2.rectangle(draw, (l, t), (r, b), color, 2)
+                cv2.putText(draw, name, (l, b+20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                 
-                if self.is_session_active and self.current_course and student_id:
-                    if self.db.mark_attendance(student_id, self.current_course.id):
-                        if student_id in self.student_tree_map:
-                            tree_id = self.student_tree_map[student_id]
-                            self.tree.set(tree_id, "status", "PRESENT")
-                            self.tree.item(tree_id, tags=("present",))
-                            self.status_lbl.config(text=f"Marked: {name}")
-            try:
-                img = Image.fromarray(frame_draw)
-                imgtk = ImageTk.PhotoImage(image=img)
-                if hasattr(self, 'video_label'):
-                    self.video_label.imgtk = imgtk
-                    self.video_label.configure(image=imgtk)
-            except: pass
+                # Logic: Mark Attendance if belongs to current group
+                if self.is_session_active and self.active_session and sid:
+                    # Check if student is in list (belongs to group)
+                    if sid in self.student_tree_map:
+                        cid = self.active_session['course_id']
+                        gid = self.active_session['group_id']
+                        if self.db.mark_attendance(sid, cid, gid):
+                            # Update UI
+                            iid = self.student_tree_map[sid]
+                            self.tree_att.set(iid, "status", "PRESENT")
+                            self.tree_att.item(iid, tags=("present",))
+
+            img = ImageTk.PhotoImage(Image.fromarray(draw))
+            self.video_label.configure(image=img)
+            self.video_label.imgtk = img
+        
         self.root.after(30, self.update_video_loop)
 
-    def export_current_session(self):
-        if not self.current_course: return
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        clean_name = self.current_course.name.replace(" ", "_")
-        default_name = f"Attendance_{clean_name}_{today_str}.csv"
-        filepath = filedialog.asksaveasfilename(defaultextension=".csv", initialfile=default_name, filetypes=[("CSV Files", "*.csv")])
-        if not filepath: return
+    def export_csv(self):
+        if not self.active_session: return
         try:
-            with open(filepath, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Student Name", "Status", "Date", "Course"])
-                for item_id in self.tree.get_children():
-                    vals = self.tree.item(item_id)["values"]
-                    writer.writerow([vals[0], vals[1], today_str, self.current_course.name])
-            messagebox.showinfo("Success", f"Data exported to {filepath}")
-        except Exception as e: messagebox.showerror("Export Error", str(e))
-
-    def open_register_window(self):
-        top = tk.Toplevel(self.root)
-        top.title("Register Student")
-        top.geometry("350x300")
-
-        next_roll = self.db.generate_next_roll_number()
-        ttk.Label(top, text="Auto-Assigned ID:").pack(pady=(15, 5))
-        roll_var = tk.StringVar(value=next_roll)
-        roll_entry = ttk.Entry(top, textvariable=roll_var, state="disabled") 
-        roll_entry.pack(pady=5)
-
-        ttk.Label(top, text="Full Name:").pack(pady=5)
-        name_entry = ttk.Entry(top)
-        name_entry.pack(pady=5)
-        name_entry.focus() 
-
-        def run_registration():
-            files = filedialog.askopenfilenames(parent=top, title="Select 3-5 Photos", filetypes=[("Images", "*.jpg *.png *.jpeg")])
-            if not files: return
-            name = name_entry.get().strip()
-            roll = roll_var.get() 
-            if not name:
-                messagebox.showerror("Error", "Please enter a name.")
-                return
-            path = self.vision.register_faces(files, name, roll)
+            path = filedialog.asksaveasfilename(defaultextension=".csv")
             if path:
-                if self.db.add_student(name, roll, path):
-                    messagebox.showinfo("Success", f"Student '{name}' registered with ID: {roll}")
-                    self.load_global_data()
-                    if self.current_course: self.refresh_attendance_list()
-                    top.destroy()
-                else: messagebox.showerror("Database Error", "ID error.")
-            else: messagebox.showerror("Vision Error", "No faces detected.")
-        ttk.Button(top, text="Select Photos & Save", command=run_registration).pack(pady=20)
+                with open(path, "w", newline="") as f:
+                    w = csv.writer(f)
+                    w.writerow(["Student", "Status", "Date", "Course", "Group"])
+                    for iid in self.tree_att.get_children():
+                        vals = self.tree_att.item(iid)['values']
+                        w.writerow([vals[0], vals[1], datetime.now().date(), self.active_session['course_name'], self.active_session['group_name']])
+                messagebox.showinfo("Success", "Exported")
+        except Exception as e: messagebox.showerror("Error", str(e))
 
     def on_close(self):
         self.stop_camera()
