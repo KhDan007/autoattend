@@ -2,7 +2,7 @@ import sqlite3
 import os
 import hashlib
 from datetime import datetime
-from src.models.entities import Student, Course, TimetableSlot
+from src.models.entities import Student, Course
 
 class DatabaseManager:
     def __init__(self, db_path="data/db/attendance.db"):
@@ -14,7 +14,7 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # 1. Users (Added is_admin)
+        # 1. Users
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,11 +25,9 @@ class DatabaseManager:
             )
         """)
 
-        # 2. Courses
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS courses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                code TEXT NOT NULL,
                 name TEXT NOT NULL,
                 teacher_id INTEGER,
                 FOREIGN KEY(teacher_id) REFERENCES users(id)
@@ -82,15 +80,14 @@ class DatabaseManager:
             )
         """)
 
-        # --- Create Default Admin ---
+        # Create Admin
         admin_user = "admin"
         admin_pass = self._hash_password("Qqwerty123!")
         try:
             cursor.execute("INSERT INTO users (username, password_hash, full_name, is_admin) VALUES (?, ?, ?, ?)", 
                            (admin_user, admin_pass, "System Administrator", 1))
-            print("Admin account created.")
         except sqlite3.IntegrityError:
-            pass # Admin already exists
+            pass
 
         conn.commit()
         conn.close()
@@ -122,7 +119,6 @@ class DatabaseManager:
         row = cursor.fetchone()
         conn.close()
         if row:
-            # Return dict with is_admin flag
             return True, {"id": row[0], "username": row[1], "full_name": row[2], "is_admin": row[3]}
         return False, None
 
@@ -135,10 +131,10 @@ class DatabaseManager:
         conn.close()
         return [{"id": r[0], "username": r[1], "full_name": r[2]} for r in rows]
 
-    def add_course(self, code, name, teacher_id):
+    def add_course(self, name, teacher_id):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO courses (code, name, teacher_id) VALUES (?, ?, ?)", (code, name, teacher_id))
+        cursor.execute("INSERT INTO courses (name, teacher_id) VALUES (?, ?)", (name, teacher_id))
         conn.commit()
         conn.close()
 
@@ -177,10 +173,10 @@ class DatabaseManager:
     def get_courses_for_teacher(self, teacher_id):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, code, name, teacher_id FROM courses WHERE teacher_id=?", (teacher_id,))
+        cursor.execute("SELECT id, name, teacher_id FROM courses WHERE teacher_id=?", (teacher_id,))
         rows = cursor.fetchall()
         conn.close()
-        return [Course(id=r[0], code=r[1], name=r[2], teacher_id=r[3]) for r in rows]
+        return [Course(id=r[0], name=r[1], teacher_id=r[2]) for r in rows]
 
     def get_active_course_for_teacher(self, teacher_id):
         now = datetime.now()
@@ -191,7 +187,7 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         query = """
-            SELECT c.id, c.code, c.name, c.teacher_id
+            SELECT c.id, c.name, c.teacher_id
             FROM courses c
             JOIN timetable t ON c.id = t.course_id
             WHERE c.teacher_id = ?
@@ -204,17 +200,22 @@ class DatabaseManager:
         conn.close()
 
         if row:
-            return Course(id=row[0], code=row[1], name=row[2], teacher_id=row[3])
+            return Course(id=row[0], name=row[1], teacher_id=row[2])
         return None
     
     # --- STUDENT/GENERIC METHODS ---
-    def get_all_courses(self):
+    def generate_next_roll_number(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, code, name, teacher_id FROM courses")
-        rows = cursor.fetchall()
-        conn.close()
-        return [Course(id=r[0], code=r[1], name=r[2], teacher_id=r[3]) for r in rows]
+        try:
+            cursor.execute("SELECT MAX(CAST(roll_number AS INTEGER)) FROM students")
+            row = cursor.fetchone()
+            max_id = row[0] if row[0] is not None else 0
+            return str(max_id + 1)
+        except Exception:
+            return "1001" 
+        finally:
+            conn.close()
 
     def add_student(self, name, roll, path):
         conn = sqlite3.connect(self.db_path)
@@ -222,7 +223,6 @@ class DatabaseManager:
         try:
             cursor.execute("INSERT INTO students (name, roll_number, encoding_file_path) VALUES (?, ?, ?)", (name, roll, path))
             sid = cursor.lastrowid
-            # Auto enroll in all courses for demo
             cursor.execute("SELECT id FROM courses")
             c_ids = cursor.fetchall()
             for cid in c_ids:
@@ -272,22 +272,3 @@ class DatabaseManager:
         cursor = conn.cursor()
         cursor.execute("SELECT student_id, status FROM attendance WHERE course_id=? AND date(timestamp)=date('now')", (course_id,))
         return {r[0]: r[1] for r in cursor.fetchall()}
-    
-    def generate_next_roll_number(self):
-        """Calculates the next available roll number."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # We try to find the highest number currently in use
-        # We cast to integer to ensure '10' comes after '9', not '1'
-        try:
-            cursor.execute("SELECT MAX(CAST(roll_number AS INTEGER)) FROM students")
-            row = cursor.fetchone()
-            max_id = row[0] if row[0] is not None else 0
-            next_id = max_id + 1
-            return str(next_id)
-        except Exception as e:
-            # Fallback if something goes wrong (e.g., non-numeric IDs exist)
-            return "1001" 
-        finally:
-            conn.close()
