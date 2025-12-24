@@ -183,9 +183,11 @@ class AutoAttendApp:
         )
         course_frame.pack(fill=tk.X, pady=(0, 15))
 
-        # Fetch courses from DB
-        courses = self.db.get_all_courses()
-        course_options = [f"{c.code} - {c.name}" for c in courses]
+       # 1. Fetch only THIS teacher's courses
+        teacher_id = self.current_user['id']
+        self.courses = self.db.get_courses_for_teacher(teacher_id)
+        
+        course_options = [f"{c.code} - {c.name}" for c in self.courses]
 
         self.course_var = tk.StringVar()
         self.course_combo = ttk.Combobox(
@@ -197,8 +199,27 @@ class AutoAttendApp:
         self.course_combo.pack(fill=tk.X)
         self.course_combo.bind("<<ComboboxSelected>>", self.on_course_selected)
 
-        if not courses:
-            self.course_combo.set("No courses found in DB")
+        # 2. AUTO-SELECT based on Timetable
+        active_course = self.db.get_active_course_for_teacher(teacher_id)
+        
+        if active_course:
+            # Format the string to match the combobox values
+            combo_value = f"{active_course.code} - {active_course.name}"
+            
+            # Check if this course is actually in our list (safety check)
+            if combo_value in course_options:
+                self.course_combo.set(combo_value)
+                self.current_course = active_course
+                self.lbl_session_course.config(text=f"Course: {active_course.code} (Auto-Selected)")
+                self.refresh_attendance_list()
+                
+                # Optional: Auto-enable the start button
+                self.btn_start.config(state="normal")
+        else:
+            if not self.courses:
+                self.course_combo.set("No courses assigned")
+            else:
+                self.course_combo.set("Select a course...")
 
         # 4. Session Info
         self.session_info_frame = ttk.LabelFrame(
