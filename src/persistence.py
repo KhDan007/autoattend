@@ -272,3 +272,22 @@ class DatabaseManager:
         cursor = conn.cursor()
         cursor.execute("SELECT student_id, status FROM attendance WHERE course_id=? AND date(timestamp)=date('now')", (course_id,))
         return {r[0]: r[1] for r in cursor.fetchall()}
+    
+    def generate_next_roll_number(self):
+        """Calculates the next available roll number."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # We try to find the highest number currently in use
+        # We cast to integer to ensure '10' comes after '9', not '1'
+        try:
+            cursor.execute("SELECT MAX(CAST(roll_number AS INTEGER)) FROM students")
+            row = cursor.fetchone()
+            max_id = row[0] if row[0] is not None else 0
+            next_id = max_id + 1
+            return str(next_id)
+        except Exception as e:
+            # Fallback if something goes wrong (e.g., non-numeric IDs exist)
+            return "1001" 
+        finally:
+            conn.close()
