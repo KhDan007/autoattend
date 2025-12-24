@@ -176,14 +176,35 @@ class AutoAttendApp:
         ).pack(side="right", fill="x", expand=True, padx=2)
 
         # === RIGHT PANEL: STUDENTS ===
-        right_frame = ttk.LabelFrame(
-            paned, text="Step 2: Manage Students in Group", padding="5"
-        )
+        right_frame = ttk.LabelFrame(paned, text="Step 2: Manage Students", padding="5")
         paned.add(right_frame, weight=3)
 
-        # Student List
+        # UI FIX: Pack Control Frame FIRST at BOTTOM so it sticks there
+        ctrl_frame = ttk.Frame(right_frame)
+        ctrl_frame.pack(side=tk.BOTTOM, fill="x", pady=5)
+
+        # Controls
+        ttk.Button(
+            ctrl_frame, text="+ New Student", command=self.admin_add_student
+        ).pack(side="left", padx=5)
+        ttk.Button(
+            ctrl_frame,
+            text="🔗 Add Existing / Transfer",
+            command=self.admin_link_existing_student,
+        ).pack(side="left", padx=5)
+        ttk.Button(
+            ctrl_frame, text="📷 Upload Face", command=self.admin_upload_face
+        ).pack(side="left", padx=5)
+        ttk.Button(ctrl_frame, text="- Remove", command=self.admin_delete_student).pack(
+            side="right", padx=5
+        )
+
+        # Student List (Takes all remaining space)
+        list_frame = ttk.Frame(right_frame)
+        list_frame.pack(side=tk.TOP, fill="both", expand=True)
+
         cols = ("roll", "name", "status")
-        self.tree_students = ttk.Treeview(right_frame, columns=cols, show="headings")
+        self.tree_students = ttk.Treeview(list_frame, columns=cols, show="headings")
         self.tree_students.heading("roll", text="ID")
         self.tree_students.column("roll", width=60)
         self.tree_students.heading("name", text="Student Name")
@@ -192,38 +213,21 @@ class AutoAttendApp:
         self.tree_students.tag_configure("unregistered", foreground="red")
 
         sb = ttk.Scrollbar(
-            right_frame, orient=tk.VERTICAL, command=self.tree_students.yview
+            list_frame, orient=tk.VERTICAL, command=self.tree_students.yview
         )
         self.tree_students.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree_students.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Student Controls (Bottom)
-        ctrl_frame = ttk.Frame(right_frame)
-        ctrl_frame.pack(side=tk.BOTTOM, fill="x", pady=5)
-
-        ttk.Button(
-            ctrl_frame, text="+ Add Student", command=self.admin_add_student
-        ).pack(side="left", padx=5)
-        ttk.Button(
-            ctrl_frame, text="📷 Upload Face", command=self.admin_upload_face
-        ).pack(side="left", padx=5)
-        ttk.Button(
-            ctrl_frame, text="- Delete Student", command=self.admin_delete_student
-        ).pack(side="right", padx=5)
-
         self.refresh_group_list()
 
     # --- LOGIC: GROUPS ---
     def refresh_group_list(self):
-        # Clear Group Tree
         for i in self.tree_groups.get_children():
             self.tree_groups.delete(i)
-        # Clear Student Tree (UI Reset)
         for i in self.tree_students.get_children():
             self.tree_students.delete(i)
         self.admin_sel_group_id = None
-
         for g in self.db.get_all_groups():
             self.tree_groups.insert("", "end", values=(g.id, g.name))
 
@@ -231,14 +235,11 @@ class AutoAttendApp:
         sel = self.tree_groups.selection()
         if not sel:
             return
-
-        # Get Group ID and Refresh Student List
         self.admin_sel_group_id = self.tree_groups.item(sel[0])["values"][0]
-        group_name = self.tree_groups.item(sel[0])["values"][1]
         self.refresh_student_list_for_group()
 
     def admin_add_group(self):
-        name = simpledialog.askstring("New Group", "Group Name (e.g., CS-SL-26-1):")
+        name = simpledialog.askstring("New Group", "Group Name:")
         if name:
             if self.db.add_group(name):
                 self.refresh_group_list()
@@ -256,16 +257,12 @@ class AutoAttendApp:
 
     # --- LOGIC: STUDENTS ---
     def refresh_student_list_for_group(self):
-        # Clear current list
         for i in self.tree_students.get_children():
             self.tree_students.delete(i)
-
         if not self.admin_sel_group_id:
             return
 
-        # Fetch students only for this group
         students = self.db.get_students_by_group(self.admin_sel_group_id)
-
         for s in students:
             status = "Registered" if s.encoding_path else "Unregistered"
             tag = "registered" if s.encoding_path else "unregistered"
@@ -279,25 +276,69 @@ class AutoAttendApp:
                 "Warning", "Please select a group on the left first."
             )
             return
-
         next_roll = self.db.generate_next_roll_number()
         name = simpledialog.askstring("Add Student", f"Auto-ID: {next_roll}\nName:")
         if name:
             if self.db.add_student(name, next_roll, self.admin_sel_group_id):
                 self.refresh_student_list_for_group()
+
+    def admin_link_existing_student(self):
+        """Allows moving a student from another group (or no group) to the current one."""
+        if not self.admin_sel_group_id:
+            messagebox.showwarning(
+                "Select Group", "Please select a target group first."
+            )
+            return
+
+        # 1. Get all students
+        all_students = self.db.get_all_students()
+        # 2. Filter: Only show students NOT in the current group
+        candidates = [s for s in all_students if s.group_id != self.admin_sel_group_id]
+
+        if not candidates:
+            messagebox.showinfo(
+                "Info", "No students found in other groups to transfer."
+            )
+            return
+
+        # 3. Popup Window
+        top = tk.Toplevel(self.root)
+        top.title("Transfer Student")
+        top.geometry("400x300")
+
+        ttk.Label(
+            top, text="Select Student to Transfer Here:", font=("Helvetica", 10, "bold")
+        ).pack(pady=10)
+
+        cols = ("name", "current_grp")
+        tree = ttk.Treeview(top, columns=cols, show="headings")
+        tree.heading("name", text="Name")
+        tree.heading("current_grp", text="Current Group")
+        tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        for s in candidates:
+            tree.insert("", "end", iid=s.id, values=(s.name, s.group_name))
+
+        def do_transfer():
+            sel = tree.selection()
+            if not sel:
+                return
+            student_id = int(sel[0])
+            if self.db.move_student_to_group(student_id, self.admin_sel_group_id):
+                self.refresh_student_list_for_group()
+                top.destroy()
             else:
-                messagebox.showerror("Error", "DB Error")
+                messagebox.showerror("Error", "Failed to transfer.")
+
+        ttk.Button(top, text="Transfer Selected", command=do_transfer).pack(pady=10)
 
     def admin_upload_face(self):
         sel = self.tree_students.selection()
         if not sel:
-            messagebox.showwarning("Select", "Select a student first.")
             return
-
         item = self.tree_students.item(sel[0])
         roll, name = item["values"][0], item["values"][1]
 
-        # Get Student ID via helper or direct lookup
         all_s = self.db.get_students_by_group(self.admin_sel_group_id)
         student = next((s for s in all_s if str(s.roll_number) == str(roll)), None)
 
@@ -311,19 +352,14 @@ class AutoAttendApp:
                 self.load_global_data()
                 self.refresh_student_list_for_group()
                 messagebox.showinfo("Success", "Face updated.")
-            else:
-                messagebox.showerror("Error", "No faces found.")
 
     def admin_delete_student(self):
         sel = self.tree_students.selection()
         if not sel:
             return
         roll = self.tree_students.item(sel[0])["values"][0]
-
-        # Get ID
         all_s = self.db.get_students_by_group(self.admin_sel_group_id)
         student = next((s for s in all_s if str(s.roll_number) == str(roll)), None)
-
         if student and messagebox.askyesno("Confirm", "Delete student?"):
             self.db.delete_student(student.id)
             self.refresh_student_list_for_group()

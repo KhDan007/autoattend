@@ -334,3 +334,13 @@ class DatabaseManager:
             WHERE course_id=? AND group_id=? AND date(timestamp)=date('now')
         """, (course_id, group_id))
         return {r[0]: r[1] for r in cursor.fetchall()}
+    
+    def move_student_to_group(self, student_id, new_group_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("UPDATE students SET group_id=? WHERE id=?", (new_group_id, student_id))
+            conn.commit()
+            return True
+        except: return False
+        finally: conn.close()
