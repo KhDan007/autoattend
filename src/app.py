@@ -515,32 +515,64 @@ class AutoAttendApp:
         except Exception as e: messagebox.showerror("Export Error", str(e))
 
     def open_register_window(self):
+        """Opens popup to register new students with Auto-ID."""
         top = tk.Toplevel(self.root)
         top.title("Register Student")
         top.geometry("350x300")
+
+        # 1. Auto-Generate Next ID
+        next_roll = self.db.generate_next_roll_number()
+
+        # 2. UI Layout
+        ttk.Label(top, text="Auto-Assigned ID:").pack(pady=(15, 5))
+        
+        # Entry is 'disabled' so user cannot change it, but we can read it programmatically
+        roll_var = tk.StringVar(value=next_roll)
+        roll_entry = ttk.Entry(top, textvariable=roll_var, state="disabled") 
+        roll_entry.pack(pady=5)
+
         ttk.Label(top, text="Full Name:").pack(pady=5)
         name_entry = ttk.Entry(top)
         name_entry.pack(pady=5)
-        ttk.Label(top, text="Roll Number (Unique ID):").pack(pady=5)
-        roll_entry = ttk.Entry(top)
-        roll_entry.pack(pady=5)
+        name_entry.focus() # Put cursor here automatically
+
         def run_registration():
-            files = filedialog.askopenfilenames(parent=top, title="Select 3-5 Photos", filetypes=[("Images", "*.jpg *.png *.jpeg")])
-            if not files: return
-            name = name_entry.get().strip()
-            roll = roll_entry.get().strip()
-            if not name or not roll:
-                messagebox.showerror("Error", "All fields are required.")
+            files = filedialog.askopenfilenames(
+                parent=top,
+                title="Select 3-5 Photos of Student",
+                filetypes=[("Images", "*.jpg *.png *.jpeg")],
+            )
+            if not files:
                 return
+
+            name = name_entry.get().strip()
+            # We use the variable we generated, not user input
+            roll = roll_var.get() 
+
+            if not name:
+                messagebox.showerror("Error", "Please enter a name.")
+                return
+
+            # Register Face
             path = self.vision.register_faces(files, name, roll)
+
             if path:
-                if self.db.add_student(name, roll, path):
-                    messagebox.showinfo("Success", f"Student {name} registered!")
+                # Save to DB
+                success = self.db.add_student(name, roll, path)
+                if success:
+                    messagebox.showinfo("Success", f"Student '{name}' registered with ID: {roll}")
                     self.load_global_data()
-                    if self.current_course: self.refresh_attendance_list()
+                    
+                    # Refresh list if a course is active
+                    if self.current_course:
+                        self.refresh_attendance_list()
+                    
                     top.destroy()
-                else: messagebox.showerror("Database Error", "Roll number exists.")
-            else: messagebox.showerror("Vision Error", "No faces detected.")
+                else:
+                    messagebox.showerror("Database Error", "ID error. Please try again.")
+            else:
+                messagebox.showerror("Vision Error", "No faces detected in the selected images.")
+
         ttk.Button(top, text="Select Photos & Save", command=run_registration).pack(pady=20)
 
     def on_close(self):
