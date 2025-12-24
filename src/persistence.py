@@ -1,8 +1,8 @@
 import sqlite3
 import os
+import hashlib
 from datetime import datetime
 from src.models.entities import Student, Course, AttendanceRecord
-
 
 class DatabaseManager:
     def __init__(self, db_path="data/db/attendance.db"):
@@ -15,7 +15,19 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # 1. Courses Table (New)
+        # 1. Users Table (New - For Teacher Login)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                full_name TEXT
+            )
+        """
+        )
+
+        # 2. Courses Table
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS courses (
@@ -26,7 +38,7 @@ class DatabaseManager:
         """
         )
 
-        # 2. Students Table
+        # 3. Students Table
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS students (
@@ -38,7 +50,7 @@ class DatabaseManager:
         """
         )
 
-        # 3. Enrollment Table (Link Student to Course) (New)
+        # 4. Enrollment Table (Link Student to Course)
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS enrollment (
@@ -51,7 +63,7 @@ class DatabaseManager:
         """
         )
 
-        # 4. Attendance Table (Updated with course_id)
+        # 5. Attendance Table
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS attendance (
@@ -73,6 +85,49 @@ class DatabaseManager:
         if not self.get_all_courses():
             self.add_course("CS101", "Intro to Programming")
             self.add_course("MATH202", "Linear Algebra")
+
+    # --- Authentication Methods (New) ---
+
+    def _hash_password(self, password):
+        """Hashes a password using SHA-256 for security."""
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def register_user(self, username, password, full_name):
+        """Registers a new teacher account."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        password_hash = self._hash_password(password)
+        
+        try:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, full_name) VALUES (?, ?, ?)",
+                (username, password_hash, full_name)
+            )
+            conn.commit()
+            return True, "Registration successful!"
+        except sqlite3.IntegrityError:
+            return False, "Username already exists."
+        finally:
+            conn.close()
+
+    def login_user(self, username, password):
+        """Authenticates a user. Returns (bool, user_data_dict)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        hashed_input = self._hash_password(password)
+        
+        cursor.execute(
+            "SELECT id, username, full_name FROM users WHERE username = ? AND password_hash = ?",
+            (username, hashed_input)
+        )
+        user = cursor.fetchone()
+        conn.close()
+
+        if user:
+            return True, {"id": user[0], "username": user[1], "full_name": user[2]}
+        else:
+            return False, None
 
     # --- Course Methods ---
     def add_course(self, code, name):
@@ -98,7 +153,6 @@ class DatabaseManager:
 
     # --- Student Methods ---
     def add_student(self, name, roll_number, encoding_path):
-        # ... (Same as before) ...
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
@@ -124,7 +178,6 @@ class DatabaseManager:
             conn.close()
 
     def get_all_students(self):
-        # ... (Same as before) ...
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT id, name, roll_number, encoding_file_path FROM students")

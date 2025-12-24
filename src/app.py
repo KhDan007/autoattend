@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
 import cv2
 import csv
@@ -10,11 +10,10 @@ from src.hardware import CameraManager
 from src.persistence import DatabaseManager
 from src.vision import FaceRecognizer
 
-
 class AutoAttendApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("AutoAttend - Face Recognition Attendance System")
+        self.root.title("AutoAttend - Intelligent Attendance System")
         self.root.geometry("1100x750")
 
         # --- Initialize Subsystems ---
@@ -26,19 +25,21 @@ class AutoAttendApp:
         self.load_global_data()
 
         # --- Application State ---
+        self.current_user = None
         self.current_course = None
         self.is_session_active = False
         self.student_tree_map = {}  # Maps student_id -> Treeview Item ID
 
-        # --- UI Setup ---
-        self.setup_main_layout()
-        self.setup_left_panel()
-        self.setup_right_panel()
-        self.setup_status_bar()
+        # --- Styles ---
+        self._setup_styles()
 
-        # --- Start Loops ---
-        # Note: We don't start the camera immediately; user must click Start
-        self.update_video_loop()
+        # --- Start at Login Screen ---
+        self.show_login_screen()
+
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.configure("Title.TLabel", font=("Helvetica", 24, "bold"))
+        style.configure("Header.TLabel", font=("Helvetica", 14, "bold"))
 
     def load_global_data(self):
         """Loads all student encodings initially."""
@@ -47,11 +48,81 @@ class AutoAttendApp:
             self.vision.load_encodings(all_students)
         except Exception as e:
             messagebox.showerror("Initialization Error", f"Failed to load data: {e}")
+    
+    def _clear_window(self):
+        """Helper to remove all widgets from the root window."""
+        for widget in self.root.winfo_children():
+            widget.destroy()
 
-    # ================= UI Layout =================
+    # ==========================================
+    # 1. LOGIN SYSTEM
+    # ==========================================
+    def show_login_screen(self):
+        self._clear_window()
+        
+        # Center Frame
+        login_frame = ttk.Frame(self.root, padding="30", relief="ridge")
+        login_frame.place(relx=0.5, rely=0.5, anchor="center")
 
-    def setup_main_layout(self):
-        # Split window into Left (Video) and Right (Controls/List)
+        ttk.Label(login_frame, text="AutoAttend Login", style="Title.TLabel").pack(pady=20)
+
+        # Username
+        ttk.Label(login_frame, text="Username:").pack(anchor="w")
+        self.username_var = tk.StringVar()
+        ttk.Entry(login_frame, textvariable=self.username_var, width=30).pack(pady=5)
+
+        # Password
+        ttk.Label(login_frame, text="Password:").pack(anchor="w")
+        self.password_var = tk.StringVar()
+        ttk.Entry(login_frame, textvariable=self.password_var, show="*", width=30).pack(pady=5)
+
+        # Buttons
+        btn_frame = ttk.Frame(login_frame)
+        btn_frame.pack(pady=20, fill="x")
+        
+        ttk.Button(btn_frame, text="Login", command=self.perform_login).pack(side="left", fill="x", expand=True, padx=5)
+        ttk.Button(btn_frame, text="Register New Teacher", command=self.register_teacher_popup).pack(side="right", fill="x", expand=True, padx=5)
+
+    def perform_login(self):
+        user = self.username_var.get()
+        pwd = self.password_var.get()
+        
+        success, data = self.db.login_user(user, pwd)
+        if success:
+            self.current_user = data
+            self.build_dashboard() # Transition to main app
+        else:
+            messagebox.showerror("Login Failed", "Invalid username or password")
+
+    def register_teacher_popup(self):
+        username = simpledialog.askstring("Register", "Choose a Username:")
+        if not username: return
+        password = simpledialog.askstring("Register", "Choose a Password:", show="*")
+        if not password: return
+        fullname = simpledialog.askstring("Register", "Enter Full Name:")
+        
+        success, msg = self.db.register_user(username, password, fullname)
+        if success:
+            messagebox.showinfo("Registration", msg)
+        else:
+            messagebox.showerror("Registration Failed", msg)
+
+    # ==========================================
+    # 2. MAIN DASHBOARD UI
+    # ==========================================
+    def build_dashboard(self):
+        """Constructs the main interface after login."""
+        self._clear_window()
+        
+        # --- Top Header ---
+        header_frame = ttk.Frame(self.root, padding="10")
+        header_frame.pack(side="top", fill="x")
+        
+        user_text = f"Teacher: {self.current_user['full_name']}"
+        ttk.Label(header_frame, text=user_text, style="Header.TLabel").pack(side="left")
+        ttk.Button(header_frame, text="Logout", command=self.logout).pack(side="right")
+
+        # --- Paned Window Layout ---
         self.paned_window = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         self.paned_window.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
@@ -60,6 +131,18 @@ class AutoAttendApp:
 
         self.paned_window.add(self.left_panel, weight=2)
         self.paned_window.add(self.right_panel, weight=1)
+
+        self.setup_left_panel()
+        self.setup_right_panel()
+        self.setup_status_bar()
+
+        # Start the video loop (it waits for 'Start' click to actually capture)
+        self.update_video_loop()
+
+    def logout(self):
+        self.stop_camera()
+        self.current_user = None
+        self.show_login_screen()
 
     def setup_left_panel(self):
         # 1. Video Feed Area
@@ -189,7 +272,6 @@ class AutoAttendApp:
 
     def start_camera(self):
         try:
-            print(1)
             self.camera.start()
             self.btn_start["state"] = "disabled"
             self.btn_stop["state"] = "normal"
@@ -204,16 +286,19 @@ class AutoAttendApp:
 
     def stop_camera(self):
         self.camera.stop()
-        self.btn_start["state"] = "normal"
-        self.btn_stop["state"] = "disabled"
-        self.is_session_active = False
-        self.lbl_session_status.config(text="Status: Inactive", foreground="red")
-        self.status_lbl.config(text="Camera Stopped")
+        try:
+            self.btn_start["state"] = "normal"
+            self.btn_stop["state"] = "disabled"
+            self.is_session_active = False
+            self.lbl_session_status.config(text="Status: Inactive", foreground="red")
+            self.status_lbl.config(text="Camera Stopped")
 
-        # Reset Placeholder
-        placeholder = ImageTk.PhotoImage(Image.new("RGB", (640, 480), color="gray"))
-        self.video_label.configure(image=placeholder)
-        self.video_label.image = placeholder
+            # Reset Placeholder
+            placeholder = ImageTk.PhotoImage(Image.new("RGB", (640, 480), color="gray"))
+            self.video_label.configure(image=placeholder)
+            self.video_label.image = placeholder
+        except tk.TclError:
+            pass # Window might be destroyed
 
     def on_course_selected(self, event):
         """Handle Combobox selection"""
@@ -257,27 +342,26 @@ class AutoAttendApp:
 
     def update_video_loop(self):
         """Core loop: Capture -> Detect -> Draw -> Update UI"""
+        # If logged out or window closed, stop
+        if not self.current_user:
+            return
+
         frame_rgb = self.camera.get_frame()
 
         if frame_rgb is not None:
-            # 1. Detect Faces (Using updated method from previous step)
-            # Returns list of (student_id, name, (top, right, bottom, left))
+            # 1. Detect Faces
             detections = self.vision.detect_and_identify(frame_rgb)
 
-            # 2. Draw on Frame (Copy frame to avoid modifying original buffer)
+            # 2. Draw on Frame
             frame_draw = frame_rgb.copy()
 
             for student_id, name, (top, right, bottom, left) in detections:
-                # Color: Green if identified, Red if unknown
                 color = (0, 255, 0) if student_id else (255, 0, 0)
 
-                # Draw Box
                 cv2.rectangle(frame_draw, (left, top), (right, bottom), color, 2)
-                # Draw Name Background
                 cv2.rectangle(
                     frame_draw, (left, bottom - 30), (right, bottom), color, cv2.FILLED
                 )
-                # Draw Name Text
                 cv2.putText(
                     frame_draw,
                     name,
@@ -288,27 +372,29 @@ class AutoAttendApp:
                     1,
                 )
 
-                # 3. Mark Attendance (Only if session is active and course selected)
+                # 3. Mark Attendance
                 if self.is_session_active and self.current_course and student_id:
                     newly_marked = self.db.mark_attendance(
                         student_id, self.current_course.id
                     )
 
                     if newly_marked:
-                        # Update UI Treeview instantly without full refresh
                         if student_id in self.student_tree_map:
                             tree_id = self.student_tree_map[student_id]
                             self.tree.set(tree_id, "status", "PRESENT")
                             self.tree.item(tree_id, tags=("present",))
                             self.status_lbl.config(text=f"Marked: {name}")
 
-            # 4. Display in Tkinter
-            img = Image.fromarray(frame_draw)
-            imgtk = ImageTk.PhotoImage(image=img)
-            self.video_label.imgtk = imgtk
-            self.video_label.configure(image=imgtk)
+            # 4. Display
+            try:
+                img = Image.fromarray(frame_draw)
+                imgtk = ImageTk.PhotoImage(image=img)
+                self.video_label.imgtk = imgtk
+                self.video_label.configure(image=imgtk)
+            except:
+                pass # Window closed
 
-        # Schedule next update (~30 FPS)
+        # Schedule next update
         self.root.after(30, self.update_video_loop)
 
     def export_current_session(self):
@@ -334,7 +420,6 @@ class AutoAttendApp:
                 writer = csv.writer(f)
                 writer.writerow(["Student Name", "Status", "Date", "Course"])
 
-                # Iterate through treeview items
                 for item_id in self.tree.get_children():
                     vals = self.tree.item(item_id)["values"]
                     writer.writerow(
@@ -375,31 +460,22 @@ class AutoAttendApp:
                 messagebox.showerror("Error", "All fields are required.")
                 return
 
-            # Call Vision module to process images
             path = self.vision.register_faces(files, name, roll)
 
             if path:
                 success = self.db.add_student(name, roll, path)
                 if success:
                     messagebox.showinfo("Success", f"Student {name} registered!")
-                    self.load_global_data()  # Reload encodings
-
-                    # If current course is selected, refresh list so they appear
+                    self.load_global_data()
                     if self.current_course:
                         self.refresh_attendance_list()
                     top.destroy()
                 else:
-                    messagebox.showerror(
-                        "Database Error", "Roll number already exists."
-                    )
+                    messagebox.showerror("Database Error", "Roll number already exists.")
             else:
-                messagebox.showerror(
-                    "Vision Error", "No faces detected in the selected images."
-                )
+                messagebox.showerror("Vision Error", "No faces detected in the selected images.")
 
-        ttk.Button(top, text="Select Photos & Save", command=run_registration).pack(
-            pady=20
-        )
+        ttk.Button(top, text="Select Photos & Save", command=run_registration).pack(pady=20)
 
     def on_close(self):
         self.stop_camera()
