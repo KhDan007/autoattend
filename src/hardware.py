@@ -9,18 +9,36 @@ class CameraManager:
         self.cap = cv2.VideoCapture(self.camera_index)
         self.current_frame = None
         self.running = False
+        # Lock ensures thread-safety when writing/reading the shared frame buffer
         self.lock = threading.Lock()
         self.thread = None
 
     def start(self):
+        """Starts the camera thread. Raises RuntimeError if camera is unavailable."""
         if self.running:
             return
-        
-        # --- FIX: Re-initialize camera if it was released ---
+
+        # 1. Attempt to open the camera
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(self.camera_index)
-        # ----------------------------------------------------
 
+        # 2. Basic Check: Did the driver acknowledge the device?
+        if not self.cap.isOpened():
+            raise RuntimeError(
+                f"Could not open camera {self.camera_index}. Is it plugged in?"
+            )
+
+        # 3. ROBUST CHECK: Try to actually read a frame
+        # This catches the case where another app has locked the camera stream
+        ret, frame = self.cap.read()
+        if not ret:
+            # If we can't read, the camera is likely busy or broken
+            self.cap.release()
+            raise RuntimeError(
+                f"Camera {self.camera_index} is busy or not responding. Is another app using it?"
+            )
+
+        # 4. If successful, start the thread
         self.running = True
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
@@ -28,20 +46,29 @@ class CameraManager:
     def stop(self):
         self.running = False
         if self.thread:
-            self.thread.join()
+            self.thread.join()  # Wait for thread to finish safely
         if self.cap.isOpened():
             self.cap.release()
 
     def _capture_loop(self):
+        """
+        Continuous loop running on a separate thread.
+        Decouples hardware latency (camera reads) from the UI rendering loop.
+        """
         while self.running:
             ret, frame = self.cap.read()
             if ret:
-                # Convert BGR (OpenCV) to RGB (Tkinter/Pillow) here
+                # Convert BGR (OpenCV standard) to RGB (UI standard) immediately
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                # Critical Section: Acquire lock before writing to shared memory
                 with self.lock:
                     self.current_frame = frame_rgb
-            time.sleep(0.01)  # Sleep 10ms to save CPU
+
+            # Sleep 10ms to prevent CPU core saturation (approx 100 FPS cap)
+            time.sleep(0.01)
 
     def get_frame(self):
+        """Thread-safe accessor for the latest frame."""
         with self.lock:
             return self.current_frame

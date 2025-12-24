@@ -27,7 +27,6 @@ class FaceRecognizer:
                 except Exception as e:
                     print(f"Error loading encoding for {student.name}: {e}")
 
-    # ... (register_faces method remains the same) ...
     def register_faces(self, image_paths, name, roll_no):
         encodings = []
         for path in image_paths:

@@ -188,14 +188,19 @@ class AutoAttendApp:
     # ================= Logic & Callbacks =================
 
     def start_camera(self):
-        self.camera.start()
-        self.btn_start["state"] = "disabled"
-        self.btn_stop["state"] = "normal"
-        self.is_session_active = True
-        self.lbl_session_status.config(
-            text="Status: Active Session", foreground="green"
-        )
-        self.status_lbl.config(text="Camera Started")
+        try:
+            print(1)
+            self.camera.start()
+            self.btn_start["state"] = "disabled"
+            self.btn_stop["state"] = "normal"
+            self.is_session_active = True
+            self.lbl_session_status.config(
+                text="Status: Active Session", foreground="green"
+            )
+            self.status_lbl.config(text="Camera Started")
+        except Exception as e:
+            messagebox.showerror("Camera Error", f"Failed to start camera. Make sure no other application is using it.\nError: {e}")
+            return
 
     def stop_camera(self):
         self.camera.stop()
