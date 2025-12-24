@@ -2,7 +2,7 @@ import sqlite3
 import os
 import hashlib
 from datetime import datetime
-from src.models.entities import Student, Course
+from src.models.entities import Student, Course, TimetableSlot
 
 class DatabaseManager:
     def __init__(self, db_path="data/db/attendance.db"):
@@ -14,17 +14,18 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # 1. Users (Teachers)
+        # 1. Users (Added is_admin)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
-                full_name TEXT
+                full_name TEXT,
+                is_admin INTEGER DEFAULT 0
             )
         """)
 
-        # 2. Courses (Now linked to teacher_id)
+        # 2. Courses
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS courses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,8 +36,7 @@ class DatabaseManager:
             )
         """)
 
-        # 3. Timetable (New Table)
-        # day_of_week: 0=Monday, 6=Sunday
+        # 3. Timetable
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS timetable (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +81,17 @@ class DatabaseManager:
                 FOREIGN KEY(course_id) REFERENCES courses(id)
             )
         """)
+
+        # --- Create Default Admin ---
+        admin_user = "admin"
+        admin_pass = self._hash_password("Qqwerty123!")
+        try:
+            cursor.execute("INSERT INTO users (username, password_hash, full_name, is_admin) VALUES (?, ?, ?, ?)", 
+                           (admin_user, admin_pass, "System Administrator", 1))
+            print("Admin account created.")
+        except sqlite3.IntegrityError:
+            pass # Admin already exists
+
         conn.commit()
         conn.close()
 
@@ -93,60 +104,77 @@ class DatabaseManager:
         cursor = conn.cursor()
         pwd_hash = self._hash_password(password)
         try:
-            cursor.execute("INSERT INTO users (username, password_hash, full_name) VALUES (?, ?, ?)", 
+            cursor.execute("INSERT INTO users (username, password_hash, full_name, is_admin) VALUES (?, ?, ?, 0)", 
                            (username, pwd_hash, full_name))
             conn.commit()
-            user_id = cursor.lastrowid
-            
-            # Seed data for this new teacher so they have something to test
-            self._seed_data_for_teacher(user_id, cursor)
-            conn.commit()
-            
-            return True, "Registration successful! Demo classes added."
+            return True, "Registration successful!"
         except sqlite3.IntegrityError:
             return False, "Username taken."
         finally:
             conn.close()
 
-    def _seed_data_for_teacher(self, teacher_id, cursor):
-        """Creates dummy courses and a timetable slot for RIGHT NOW."""
-        # 1. Add a generic course
-        cursor.execute("INSERT INTO courses (code, name, teacher_id) VALUES (?, ?, ?)", 
-                       ("CS101", "Computer Science", teacher_id))
-        cs_id = cursor.lastrowid
-        
-        # 2. Add a course that is active RIGHT NOW (Smart Seeding)
-        now = datetime.now()
-        day = now.weekday() # 0-6
-        # Start 1 hour ago, End 1 hour from now
-        start_h = max(0, now.hour - 1)
-        end_h = min(23, now.hour + 1)
-        
-        start_str = f"{start_h:02d}:00"
-        end_str = f"{end_h:02d}:00"
-        
-        cursor.execute("INSERT INTO courses (code, name, teacher_id) VALUES (?, ?, ?)", 
-                       ("LIVE100", "Current Live Class", teacher_id))
-        live_id = cursor.lastrowid
-        
-        cursor.execute("INSERT INTO timetable (course_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?)",
-                       (live_id, day, start_str, end_str))
-
     def login_user(self, username, password):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         hashed = self._hash_password(password)
-        cursor.execute("SELECT id, username, full_name FROM users WHERE username=? AND password_hash=?", 
+        cursor.execute("SELECT id, username, full_name, is_admin FROM users WHERE username=? AND password_hash=?", 
                        (username, hashed))
         row = cursor.fetchone()
         conn.close()
         if row:
-            return True, {"id": row[0], "username": row[1], "full_name": row[2]}
+            # Return dict with is_admin flag
+            return True, {"id": row[0], "username": row[1], "full_name": row[2], "is_admin": row[3]}
         return False, None
 
-    # --- Course & Timetable Logic ---
+    # --- ADMIN METHODS ---
+    def get_all_teachers(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, full_name FROM users WHERE is_admin=0")
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"id": r[0], "username": r[1], "full_name": r[2]} for r in rows]
+
+    def add_course(self, code, name, teacher_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO courses (code, name, teacher_id) VALUES (?, ?, ?)", (code, name, teacher_id))
+        conn.commit()
+        conn.close()
+
+    def delete_course(self, course_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM courses WHERE id=?", (course_id,))
+        cursor.execute("DELETE FROM timetable WHERE course_id=?", (course_id,))
+        conn.commit()
+        conn.close()
+
+    def get_timetable_for_course(self, course_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, day_of_week, start_time, end_time FROM timetable WHERE course_id=? ORDER BY day_of_week, start_time", (course_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"id":r[0], "day":r[1], "start":r[2], "end":r[3]} for r in rows]
+
+    def add_timetable_slot(self, course_id, day, start, end):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO timetable (course_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?)", 
+                       (course_id, day, start, end))
+        conn.commit()
+        conn.close()
+
+    def delete_timetable_slot(self, slot_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM timetable WHERE id=?", (slot_id,))
+        conn.commit()
+        conn.close()
+
+    # --- TEACHER METHODS ---
     def get_courses_for_teacher(self, teacher_id):
-        """Returns only courses owned by this teacher."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT id, code, name, teacher_id FROM courses WHERE teacher_id=?", (teacher_id,))
@@ -155,18 +183,13 @@ class DatabaseManager:
         return [Course(id=r[0], code=r[1], name=r[2], teacher_id=r[3]) for r in rows]
 
     def get_active_course_for_teacher(self, teacher_id):
-        """
-        Finds which course is currently scheduled based on Time and Day.
-        Returns Course object or None.
-        """
         now = datetime.now()
-        current_day = now.weekday() # 0=Monday
-        current_time = now.strftime("%H:%M") # "14:30"
+        current_day = now.weekday()
+        current_time = now.strftime("%H:%M")
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Join Courses and Timetable to find a match
         query = """
             SELECT c.id, c.code, c.name, c.teacher_id
             FROM courses c
@@ -183,17 +206,23 @@ class DatabaseManager:
         if row:
             return Course(id=row[0], code=row[1], name=row[2], teacher_id=row[3])
         return None
+    
+    # --- STUDENT/GENERIC METHODS ---
+    def get_all_courses(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, code, name, teacher_id FROM courses")
+        rows = cursor.fetchall()
+        conn.close()
+        return [Course(id=r[0], code=r[1], name=r[2], teacher_id=r[3]) for r in rows]
 
-    # --- Student & Attendance (Existing methods kept brief for context) ---
     def add_student(self, name, roll, path):
-        # (Standard implementation from previous step)
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
             cursor.execute("INSERT INTO students (name, roll_number, encoding_file_path) VALUES (?, ?, ?)", (name, roll, path))
             sid = cursor.lastrowid
-            # Auto enroll in all courses (for demo simplicity)
-            # In a real app, you'd select specific courses
+            # Auto enroll in all courses for demo
             cursor.execute("SELECT id FROM courses")
             c_ids = cursor.fetchall()
             for cid in c_ids:
