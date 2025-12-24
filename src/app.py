@@ -257,18 +257,20 @@ class AutoAttendApp:
 
     # --- LOGIC: STUDENTS ---
     def refresh_student_list_for_group(self):
-        for i in self.tree_students.get_children():
-            self.tree_students.delete(i)
-        if not self.admin_sel_group_id:
-            return
-
+        # Clear current list
+        for i in self.tree_students.get_children(): self.tree_students.delete(i)
+        
+        if not self.admin_sel_group_id: return
+        
         students = self.db.get_students_by_group(self.admin_sel_group_id)
+        
         for s in students:
             status = "Registered" if s.encoding_path else "Unregistered"
             tag = "registered" if s.encoding_path else "unregistered"
-            self.tree_students.insert(
-                "", "end", values=(s.roll_number, s.name, status), tags=(tag,)
-            )
+            
+            # FIX: We now explicitly set 'iid=s.id'. 
+            # This stores the Database ID as the row's hidden identifier.
+            self.tree_students.insert("", "end", iid=s.id, values=(s.roll_number, s.name, status), tags=(tag,))
 
     def admin_add_student(self):
         if not self.admin_sel_group_id:
@@ -283,54 +285,71 @@ class AutoAttendApp:
                 self.refresh_student_list_for_group()
 
     def admin_link_existing_student(self):
-        """Allows moving a student from another group (or no group) to the current one."""
+        """Allows Transferring (Move) or Copying (Add) a student to the current group."""
         if not self.admin_sel_group_id:
-            messagebox.showwarning(
-                "Select Group", "Please select a target group first."
-            )
+            messagebox.showwarning("Select Group", "Please select a target group first.")
             return
 
-        # 1. Get all students
+        # 1. Get candidates (Students not in current group)
         all_students = self.db.get_all_students()
-        # 2. Filter: Only show students NOT in the current group
         candidates = [s for s in all_students if s.group_id != self.admin_sel_group_id]
-
+        
         if not candidates:
-            messagebox.showinfo(
-                "Info", "No students found in other groups to transfer."
-            )
+            messagebox.showinfo("Info", "No students found in other groups.")
             return
 
-        # 3. Popup Window
+        # 2. Build Popup
         top = tk.Toplevel(self.root)
-        top.title("Transfer Student")
-        top.geometry("400x300")
-
-        ttk.Label(
-            top, text="Select Student to Transfer Here:", font=("Helvetica", 10, "bold")
-        ).pack(pady=10)
-
-        cols = ("name", "current_grp")
+        top.title("Add Existing Student")
+        top.geometry("450x350")
+        
+        ttk.Label(top, text="Select Student:", font=("Helvetica", 10, "bold")).pack(pady=10)
+        
+        cols = ("name", "roll", "current_grp")
         tree = ttk.Treeview(top, columns=cols, show="headings")
         tree.heading("name", text="Name")
+        tree.heading("roll", text="ID")
         tree.heading("current_grp", text="Current Group")
+        tree.column("roll", width=50)
         tree.pack(fill="both", expand=True, padx=10, pady=5)
-
+        
         for s in candidates:
-            tree.insert("", "end", iid=s.id, values=(s.name, s.group_name))
+            tree.insert("", "end", iid=s.id, values=(s.name, s.roll_number, s.group_name))
 
-        def do_transfer():
+        # 3. Action Buttons
+        btn_frame = ttk.Frame(top)
+        btn_frame.pack(pady=15)
+
+        def perform_action(action_type):
             sel = tree.selection()
-            if not sel:
-                return
+            if not sel: return
             student_id = int(sel[0])
-            if self.db.move_student_to_group(student_id, self.admin_sel_group_id):
+            
+            success = False
+            if action_type == "COPY":
+                # Create a copy in this group
+                success = self.db.copy_student_to_group(student_id, self.admin_sel_group_id)
+            elif action_type == "MOVE":
+                # Remove from old group, move to this one
+                success = self.db.move_student_to_group(student_id, self.admin_sel_group_id)
+
+            if success:
                 self.refresh_student_list_for_group()
+                # Reload global data to ensure FaceRecognizer knows about the new ID
+                self.load_global_data() 
                 top.destroy()
             else:
-                messagebox.showerror("Error", "Failed to transfer.")
+                messagebox.showerror("Error", "Operation failed (Check if ID is unique).")
 
-        ttk.Button(top, text="Transfer Selected", command=do_transfer).pack(pady=10)
+        # COPY BUTTON (Green) - Keeps student in old group AND adds to new one
+        btn_copy = tk.Button(btn_frame, text="✚ Copy to Group", bg="#E8F5E9", 
+                             command=lambda: perform_action("COPY"))
+        btn_copy.pack(side="left", padx=10)
+        
+        # TRANSFER BUTTON (Orange) - Removes from old group
+        btn_move = tk.Button(btn_frame, text="➜ Transfer / Move", bg="#FFF3E0", 
+                             command=lambda: perform_action("MOVE"))
+        btn_move.pack(side="left", padx=10)
 
     def admin_upload_face(self):
         sel = self.tree_students.selection()
@@ -355,15 +374,18 @@ class AutoAttendApp:
 
     def admin_delete_student(self):
         sel = self.tree_students.selection()
-        if not sel:
+        if not sel: 
+            messagebox.showwarning("Selection", "Please select a student to remove.")
             return
-        roll = self.tree_students.item(sel[0])["values"][0]
-        all_s = self.db.get_students_by_group(self.admin_sel_group_id)
-        student = next((s for s in all_s if str(s.roll_number) == str(roll)), None)
-        if student and messagebox.askyesno("Confirm", "Delete student?"):
-            self.db.delete_student(student.id)
-            self.refresh_student_list_for_group()
 
+        # FIX: The selection 'sel[0]' is now the actual Database ID (because we set iid=s.id above)
+        student_id = sel[0] 
+        
+        if messagebox.askyesno("Confirm", "Remove this student from the group?"):
+            self.db.delete_student(student_id)
+            self.refresh_student_list_for_group()
+            # Reload global data so face recognition stops looking for this deleted student
+            self.load_global_data()
     # --- TAB 3: ACADEMIC (Timetable links Groups now) ---
     def _build_admin_academic_tab(self, parent):
         frame = ttk.Frame(parent, padding="10")
