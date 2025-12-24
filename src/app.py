@@ -258,19 +258,23 @@ class AutoAttendApp:
     # --- LOGIC: STUDENTS ---
     def refresh_student_list_for_group(self):
         # Clear current list
-        for i in self.tree_students.get_children(): self.tree_students.delete(i)
-        
-        if not self.admin_sel_group_id: return
-        
+        for i in self.tree_students.get_children():
+            self.tree_students.delete(i)
+
+        if not self.admin_sel_group_id:
+            return
+
         students = self.db.get_students_by_group(self.admin_sel_group_id)
-        
+
         for s in students:
             status = "Registered" if s.encoding_path else "Unregistered"
             tag = "registered" if s.encoding_path else "unregistered"
-            
-            # FIX: We now explicitly set 'iid=s.id'. 
+
+            # FIX: We now explicitly set 'iid=s.id'.
             # This stores the Database ID as the row's hidden identifier.
-            self.tree_students.insert("", "end", iid=s.id, values=(s.roll_number, s.name, status), tags=(tag,))
+            self.tree_students.insert(
+                "", "end", iid=s.id, values=(s.roll_number, s.name, status), tags=(tag,)
+            )
 
     def admin_add_student(self):
         if not self.admin_sel_group_id:
@@ -287,13 +291,15 @@ class AutoAttendApp:
     def admin_link_existing_student(self):
         """Allows Transferring (Move) or Copying (Add) a student to the current group."""
         if not self.admin_sel_group_id:
-            messagebox.showwarning("Select Group", "Please select a target group first.")
+            messagebox.showwarning(
+                "Select Group", "Please select a target group first."
+            )
             return
 
         # 1. Get candidates (Students not in current group)
         all_students = self.db.get_all_students()
         candidates = [s for s in all_students if s.group_id != self.admin_sel_group_id]
-        
+
         if not candidates:
             messagebox.showinfo("Info", "No students found in other groups.")
             return
@@ -302,9 +308,11 @@ class AutoAttendApp:
         top = tk.Toplevel(self.root)
         top.title("Add Existing Student")
         top.geometry("450x350")
-        
-        ttk.Label(top, text="Select Student:", font=("Helvetica", 10, "bold")).pack(pady=10)
-        
+
+        ttk.Label(top, text="Select Student:", font=("Helvetica", 10, "bold")).pack(
+            pady=10
+        )
+
         cols = ("name", "roll", "current_grp")
         tree = ttk.Treeview(top, columns=cols, show="headings")
         tree.heading("name", text="Name")
@@ -312,9 +320,11 @@ class AutoAttendApp:
         tree.heading("current_grp", text="Current Group")
         tree.column("roll", width=50)
         tree.pack(fill="both", expand=True, padx=10, pady=5)
-        
+
         for s in candidates:
-            tree.insert("", "end", iid=s.id, values=(s.name, s.roll_number, s.group_name))
+            tree.insert(
+                "", "end", iid=s.id, values=(s.name, s.roll_number, s.group_name)
+            )
 
         # 3. Action Buttons
         btn_frame = ttk.Frame(top)
@@ -322,33 +332,48 @@ class AutoAttendApp:
 
         def perform_action(action_type):
             sel = tree.selection()
-            if not sel: return
+            if not sel:
+                return
             student_id = int(sel[0])
-            
+
             success = False
             if action_type == "COPY":
                 # Create a copy in this group
-                success = self.db.copy_student_to_group(student_id, self.admin_sel_group_id)
+                success = self.db.copy_student_to_group(
+                    student_id, self.admin_sel_group_id
+                )
             elif action_type == "MOVE":
                 # Remove from old group, move to this one
-                success = self.db.move_student_to_group(student_id, self.admin_sel_group_id)
+                success = self.db.move_student_to_group(
+                    student_id, self.admin_sel_group_id
+                )
 
             if success:
                 self.refresh_student_list_for_group()
                 # Reload global data to ensure FaceRecognizer knows about the new ID
-                self.load_global_data() 
+                self.load_global_data()
                 top.destroy()
             else:
-                messagebox.showerror("Error", "Operation failed (Check if ID is unique).")
+                messagebox.showerror(
+                    "Error", "Operation failed (Check if ID is unique)."
+                )
 
         # COPY BUTTON (Green) - Keeps student in old group AND adds to new one
-        btn_copy = tk.Button(btn_frame, text="✚ Copy to Group", bg="#E8F5E9", 
-                             command=lambda: perform_action("COPY"))
+        btn_copy = tk.Button(
+            btn_frame,
+            text="✚ Copy to Group",
+            bg="#E8F5E9",
+            command=lambda: perform_action("COPY"),
+        )
         btn_copy.pack(side="left", padx=10)
-        
+
         # TRANSFER BUTTON (Orange) - Removes from old group
-        btn_move = tk.Button(btn_frame, text="➜ Transfer / Move", bg="#FFF3E0", 
-                             command=lambda: perform_action("MOVE"))
+        btn_move = tk.Button(
+            btn_frame,
+            text="➜ Transfer / Move",
+            bg="#FFF3E0",
+            command=lambda: perform_action("MOVE"),
+        )
         btn_move.pack(side="left", padx=10)
 
     def admin_upload_face(self):
@@ -374,25 +399,29 @@ class AutoAttendApp:
 
     def admin_delete_student(self):
         sel = self.tree_students.selection()
-        if not sel: 
+        if not sel:
             messagebox.showwarning("Selection", "Please select a student to remove.")
             return
 
         # FIX: The selection 'sel[0]' is now the actual Database ID (because we set iid=s.id above)
-        student_id = sel[0] 
-        
+        student_id = sel[0]
+
         if messagebox.askyesno("Confirm", "Remove this student from the group?"):
             self.db.delete_student(student_id)
             self.refresh_student_list_for_group()
             # Reload global data so face recognition stops looking for this deleted student
             self.load_global_data()
+
     # --- TAB 3: ACADEMIC (Timetable links Groups now) ---
+
     def _build_admin_academic_tab(self, parent):
         frame = ttk.Frame(parent, padding="10")
         frame.pack(fill="both", expand=True)
 
-        # Teachers
-        col1 = ttk.LabelFrame(frame, text="1. Teacher", padding="5")
+        # COL 1: Select Teacher (Context)
+        # Note: Even if the direct link is weak in the DB, selecting a teacher
+        # helps us visualize who we are scheduling for (conceptually).
+        col1 = ttk.LabelFrame(frame, text="1. Select Teacher", padding="5")
         col1.pack(side="left", fill="both", expand=True)
         self.tree_teachers = ttk.Treeview(
             col1, columns=("id", "name"), show="headings", height=10
@@ -403,44 +432,33 @@ class AutoAttendApp:
         self.tree_teachers.pack(fill="both", expand=True)
         self.tree_teachers.bind("<<TreeviewSelect>>", self.on_teacher_sel)
 
-        # Courses
-        col2 = ttk.LabelFrame(frame, text="2. Course", padding="5")
+        # COL 2: Select Group (REPLACED "Select Course")
+        col2 = ttk.LabelFrame(frame, text="2. Select Group", padding="5")
         col2.pack(side="left", fill="both", expand=True)
-        self.tree_courses = ttk.Treeview(
+        self.tree_academic_groups = ttk.Treeview(
             col2, columns=("id", "name"), show="headings", height=10
         )
-        self.tree_courses.heading("id", text="ID")
-        self.tree_courses.heading("name", text="Name")
-        self.tree_courses.column("id", width=30)
-        self.tree_courses.pack(fill="both", expand=True, pady=(0, 5))
-        self.tree_courses.bind("<<TreeviewSelect>>", self.on_course_sel)
-        ttk.Button(col2, text="+ Add Course", command=self.add_course_popup).pack(
-            fill="x"
-        )
+        self.tree_academic_groups.heading("id", text="ID")
+        self.tree_academic_groups.heading("name", text="Group Name")
+        self.tree_academic_groups.column("id", width=30)
+        self.tree_academic_groups.pack(fill="both", expand=True, pady=(0, 5))
+        self.tree_academic_groups.bind("<<TreeviewSelect>>", self.on_academic_group_sel)
+        # No "Add Course" button anymore
 
-        # Timetable
-        col3 = ttk.LabelFrame(frame, text="3. Timetable (Assign Group)", padding="5")
+        # COL 3: Timetable (For Selected Group)
+        col3 = ttk.LabelFrame(frame, text="3. Timetable", padding="5")
         col3.pack(side="left", fill="both", expand=True)
         self.tree_timetable = ttk.Treeview(
-            col3, columns=("day", "time", "group"), show="headings", height=10
+            col3, columns=("day", "time"), show="headings", height=10
         )
         self.tree_timetable.heading("day", text="Day")
         self.tree_timetable.heading("time", text="Time")
-        self.tree_timetable.heading("group", text="Group")  # New Column
         self.tree_timetable.column("day", width=50)
-        self.tree_timetable.column("group", width=80)
         self.tree_timetable.pack(fill="both", expand=True, pady=(0, 5))
 
-        # Timetable Controls
+        # Timetable Controls (Simplified: No Group Dropdown)
         t_ctrl = ttk.Frame(col3)
         t_ctrl.pack(fill="x")
-
-        ttk.Label(t_ctrl, text="Group:").grid(row=0, column=0, sticky="w")
-        self.var_tt_group = tk.StringVar()
-        self.combo_tt_group = ttk.Combobox(
-            t_ctrl, textvariable=self.var_tt_group, state="readonly", width=12
-        )
-        self.combo_tt_group.grid(row=0, column=1, padx=2)
 
         self.combo_tt_day = ttk.Combobox(
             t_ctrl,
@@ -449,21 +467,20 @@ class AutoAttendApp:
             width=10,
         )
         self.combo_tt_day.current(0)
-        self.combo_tt_day.grid(row=1, column=0, padx=2, pady=2)
+        self.combo_tt_day.pack(side="left", padx=2)
 
         self.ent_start = ttk.Entry(t_ctrl, width=6)
         self.ent_start.insert(0, "09:00")
-        self.ent_start.grid(row=1, column=1, padx=2)
+        self.ent_start.pack(side="left", padx=2)
+        ttk.Label(t_ctrl, text="-").pack(side="left")
         self.ent_end = ttk.Entry(t_ctrl, width=6)
         self.ent_end.insert(0, "10:00")
-        self.ent_end.grid(row=1, column=2, padx=2)
+        self.ent_end.pack(side="left", padx=2)
 
-        ttk.Button(t_ctrl, text="Assign Slot", command=self.add_slot).grid(
-            row=2, column=0, columnspan=3, sticky="ew", pady=5
+        ttk.Button(t_ctrl, text="+ Add Slot", command=self.add_slot).pack(
+            side="left", padx=5
         )
-        ttk.Button(t_ctrl, text="Delete Slot", command=self.del_slot).grid(
-            row=3, column=0, columnspan=3, sticky="ew"
-        )
+        ttk.Button(t_ctrl, text="- Del", command=self.del_slot).pack(side="right")
 
         self.refresh_teacher_list()
 
@@ -474,58 +491,50 @@ class AutoAttendApp:
             self.tree_teachers.insert("", "end", values=(t["id"], t["full_name"]))
 
     def on_teacher_sel(self, e):
-        sel = self.tree_teachers.selection()
-        if not sel:
-            return
-        self.admin_sel_teacher_id = self.tree_teachers.item(sel[0])["values"][0]
-        self.refresh_courses()
+        # When teacher is selected, show ALL groups (or filtered groups if you add that logic later)
+        self.refresh_academic_groups()
         self.clear_timetable_view()
 
-    def refresh_courses(self):
-        for i in self.tree_courses.get_children():
-            self.tree_courses.delete(i)
-        if not self.admin_sel_teacher_id:
-            return
-        for c in self.db.get_courses_for_teacher(self.admin_sel_teacher_id):
-            self.tree_courses.insert("", "end", values=(c.id, c.name))
+    def refresh_academic_groups(self):
+        for i in self.tree_academic_groups.get_children():
+            self.tree_academic_groups.delete(i)
+        # Display all groups so the teacher can pick which one they are scheduling
+        for g in self.db.get_all_groups():
+            self.tree_academic_groups.insert("", "end", values=(g.id, g.name))
 
-    def add_course_popup(self):
-        if not self.admin_sel_teacher_id:
-            return
-        name = simpledialog.askstring("New Course", "Name:")
-        if name:
-            self.db.add_course(name, self.admin_sel_teacher_id)
-            self.refresh_courses()
-
-    def on_course_sel(self, e):
-        sel = self.tree_courses.selection()
+    def on_academic_group_sel(self, e):
+        sel = self.tree_academic_groups.selection()
         if not sel:
             return
-        self.admin_sel_course_id = self.tree_courses.item(sel[0])["values"][0]
+        # Store selected Group ID instead of Course ID
+        self.admin_sel_group_id_academic = self.tree_academic_groups.item(sel[0])[
+            "values"
+        ][0]
         self.refresh_timetable()
-
-        # Populate Group Combo for Timetable
-        groups = self.db.get_all_groups()
-        self.combo_tt_group["values"] = [g.name for g in groups]
-        if groups:
-            self.combo_tt_group.current(0)
 
     def refresh_timetable(self):
         self.clear_timetable_view()
-        if not self.admin_sel_course_id:
+        if (
+            not hasattr(self, "admin_sel_group_id_academic")
+            or not self.admin_sel_group_id_academic
+        ):
             return
-        slots = self.db.get_timetable_for_course(self.admin_sel_course_id)
+
+        # We pass 0 as teacher_id for now, just fetching by group
+        slots = self.db.get_timetable_for_teacher_and_group(
+            0, self.admin_sel_group_id_academic
+        )
         days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+        # Handle the fact that row factory returns dict-like objects
         for s in slots:
+            # Check if using object or dict based on your persistence setup
+            # Assuming dict access from row factory
+            s_id = s["id"]
+            day_idx = s["day_of_week"]
+            time_str = f"{s['start_time']}-{s['end_time']}"
             self.tree_timetable.insert(
-                "",
-                "end",
-                iid=s.id,
-                values=(
-                    days[s.day_of_week],
-                    f"{s.start_time}-{s.end_time}",
-                    s.group_name,
-                ),
+                "", "end", iid=s_id, values=(days[day_idx], time_str)
             )
 
     def clear_timetable_view(self):
@@ -533,21 +542,22 @@ class AutoAttendApp:
             self.tree_timetable.delete(i)
 
     def add_slot(self):
-        if not self.admin_sel_course_id:
+        if (
+            not hasattr(self, "admin_sel_group_id_academic")
+            or not self.admin_sel_group_id_academic
+        ):
+            messagebox.showwarning("Select", "Please select a group first.")
             return
-        g_name = self.var_tt_group.get()
-        if not g_name:
-            messagebox.showerror("Error", "Select a group.")
-            return
-
-        # Get Group ID
-        groups = self.db.get_all_groups()
-        gid = next((g.id for g in groups if g.name == g_name), None)
 
         day = self.combo_tt_day.current()
         start, end = self.ent_start.get(), self.ent_end.get()
-        self.db.add_timetable_slot(self.admin_sel_course_id, gid, day, start, end)
-        self.refresh_timetable()
+
+        if self.db.add_timetable_slot_direct(
+            self.admin_sel_group_id_academic, day, start, end
+        ):
+            self.refresh_timetable()
+        else:
+            messagebox.showerror("Error", "Could not add slot.")
 
     def del_slot(self):
         sel = self.tree_timetable.selection()
@@ -645,14 +655,18 @@ class AutoAttendApp:
 
         if session:
             self.active_session = session
-            self.lbl_course.config(text=f"Course: {session['course_name']}")
-            self.lbl_group.config(text=f"Group: {session['group_name']}")
+            # REMOVED: Course Label Update
+            self.lbl_course.config(text="")
+            self.lbl_group.config(
+                text=f"Active Group: {session['group_name']}",
+                font=("Helvetica", 12, "bold"),
+            )
             self.lbl_status.config(text="Status: Ready", foreground="orange")
             self.refresh_att_list()
         else:
             self.active_session = None
-            self.lbl_course.config(text="Course: No class scheduled")
-            self.lbl_group.config(text="Group: --")
+            self.lbl_course.config(text="")
+            self.lbl_group.config(text="No active class")
             self.lbl_status.config(text="Status: Off Duty", foreground="gray")
             for i in self.tree_att.get_children():
                 self.tree_att.delete(i)
@@ -666,10 +680,12 @@ class AutoAttendApp:
             return
 
         gid = self.active_session["group_id"]
-        cid = self.active_session["course_id"]
+        # No CID anymore
 
         students = self.db.get_students_by_group(gid)
-        att_data = self.db.get_todays_attendance(cid, gid)
+        # You might need to update get_todays_attendance to not require course_id
+        # For now pass 0 or None for course_id
+        att_data = self.db.get_todays_attendance(0, gid)
 
         for s in students:
             status = att_data.get(s.id, "ABSENT")
@@ -749,7 +765,9 @@ class AutoAttendApp:
             if path:
                 with open(path, "w", newline="") as f:
                     w = csv.writer(f)
-                    w.writerow(["Student", "Status", "Date", "Course", "Group"])
+                    w.writerow(
+                        ["Student", "Status", "Date", "Group"]
+                    )  # Removed Course Column
                     for iid in self.tree_att.get_children():
                         vals = self.tree_att.item(iid)["values"]
                         w.writerow(
@@ -757,7 +775,6 @@ class AutoAttendApp:
                                 vals[0],
                                 vals[1],
                                 datetime.now().date(),
-                                self.active_session["course_name"],
                                 self.active_session["group_name"],
                             ]
                         )
