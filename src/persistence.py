@@ -25,6 +25,7 @@ class DatabaseManager:
             )
         """)
 
+        # 2. Courses
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS courses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,13 +47,13 @@ class DatabaseManager:
             )
         """)
 
-        # 4. Students
+        # 4. Students (CHANGED: encoding_file_path can now be NULL)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS students (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 roll_number TEXT UNIQUE NOT NULL,
-                encoding_file_path TEXT NOT NULL
+                encoding_file_path TEXT
             )
         """)
 
@@ -203,7 +204,7 @@ class DatabaseManager:
             return Course(id=row[0], name=row[1], teacher_id=row[2])
         return None
     
-    # --- STUDENT/GENERIC METHODS ---
+    # --- STUDENT MANAGEMENT ---
     def generate_next_roll_number(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -218,21 +219,57 @@ class DatabaseManager:
             conn.close()
 
     def add_student(self, name, roll, path):
+        # Full registration (with photos)
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
             cursor.execute("INSERT INTO students (name, roll_number, encoding_file_path) VALUES (?, ?, ?)", (name, roll, path))
-            sid = cursor.lastrowid
-            cursor.execute("SELECT id FROM courses")
-            c_ids = cursor.fetchall()
-            for cid in c_ids:
-                cursor.execute("INSERT OR IGNORE INTO enrollment (student_id, course_id) VALUES (?, ?)", (sid, cid[0]))
+            self._enroll_student_in_all_courses(cursor, cursor.lastrowid)
             conn.commit()
             return True
         except:
             return False
         finally:
             conn.close()
+
+    def add_student_placeholder(self, name, roll):
+        # Partial registration (Text only, no photos yet)
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            # Insert NULL for path
+            cursor.execute("INSERT INTO students (name, roll_number, encoding_file_path) VALUES (?, ?, NULL)", (name, roll))
+            self._enroll_student_in_all_courses(cursor, cursor.lastrowid)
+            conn.commit()
+            return True
+        except:
+            return False
+        finally:
+            conn.close()
+
+    def update_student_face(self, student_id, path):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE students SET encoding_file_path=? WHERE id=?", (path, student_id))
+        conn.commit()
+        conn.close()
+        return True
+
+    def delete_student(self, student_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM students WHERE id=?", (student_id,))
+        cursor.execute("DELETE FROM enrollment WHERE student_id=?", (student_id,))
+        cursor.execute("DELETE FROM attendance WHERE student_id=?", (student_id,))
+        conn.commit()
+        conn.close()
+
+    def _enroll_student_in_all_courses(self, cursor, student_id):
+        # Helper to auto-enroll students in existing courses
+        cursor.execute("SELECT id FROM courses")
+        c_ids = cursor.fetchall()
+        for cid in c_ids:
+            cursor.execute("INSERT OR IGNORE INTO enrollment (student_id, course_id) VALUES (?, ?)", (student_id, cid[0]))
 
     def get_all_students(self):
         conn = sqlite3.connect(self.db_path)
