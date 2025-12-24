@@ -162,8 +162,17 @@ class AutoAttendApp:
     def admin_add_group(self):
         name = simpledialog.askstring("New Group", "Group Name (e.g., CS-SL-26-1):")
         if name:
-            if self.db.add_group(name): self.refresh_group_list()
-            else: messagebox.showerror("Error", "Group exists or invalid.")
+            if self.db.add_group(name):
+                # 1. Refresh the list you are looking at (Groups Tab)
+                self.refresh_group_list()
+                
+                # 2. Refresh the student tab so the dropdown updates immediately
+                self.refresh_student_list() 
+                
+                # 3. (Optional) If you want the Timetable dropdown to update too:
+                # self.on_course_sel(None) 
+            else:
+                messagebox.showerror("Error", "Group exists or invalid.")
 
     def admin_delete_group(self):
         sel = self.tree_groups.selection()
