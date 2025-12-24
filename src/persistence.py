@@ -344,3 +344,27 @@ class DatabaseManager:
             return True
         except: return False
         finally: conn.close()
+
+    def copy_student_to_group(self, student_id, new_group_id):
+        """Creates a new student entry in the target group using existing data."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            # 1. Fetch the source student's details
+            cursor.execute("SELECT name, roll_number, encoding_path FROM students WHERE id=?", (student_id,))
+            data = cursor.fetchone()
+            
+            if not data: return False
+            
+            name, roll, path = data
+            
+            # 2. Insert as a new record in the new group (Sharing the same photo path)
+            # Note: This works best if 'roll_number' is NOT set as UNIQUE in your database schema.
+            cursor.execute("INSERT INTO students (name, roll_number, encoding_path, group_id) VALUES (?, ?, ?, ?)", 
+                           (name, roll, path, new_group_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Copy Error: {e}")
+            return False
+        finally: conn.close()
