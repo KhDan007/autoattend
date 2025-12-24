@@ -32,6 +32,9 @@ class AutoAttendApp:
 
         # --- Styles ---
         self._setup_styles()
+        
+        # Handle Window Close Event
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # --- Start at Login Screen ---
         self.show_login_screen()
@@ -47,7 +50,8 @@ class AutoAttendApp:
             all_students = self.db.get_all_students()
             self.vision.load_encodings(all_students)
         except Exception as e:
-            messagebox.showerror("Initialization Error", f"Failed to load data: {e}")
+            # Only show error if DB exists but reading fails
+            print(f"Vision Load Warning: {e}")
     
     def _clear_window(self):
         """Helper to remove all widgets from the root window."""
@@ -58,6 +62,7 @@ class AutoAttendApp:
     # 1. LOGIN SYSTEM
     # ==========================================
     def show_login_screen(self):
+        self.stop_camera() # Ensure camera is off
         self._clear_window()
         
         # Center Frame
@@ -142,6 +147,9 @@ class AutoAttendApp:
     def logout(self):
         self.stop_camera()
         self.current_user = None
+        self.current_course = None
+        # Destroy specific dashboard attributes to prevent errors on re-login
+        if hasattr(self, 'lbl_session_status'): del self.lbl_session_status
         self.show_login_screen()
 
     def setup_left_panel(self):
@@ -183,7 +191,7 @@ class AutoAttendApp:
         )
         course_frame.pack(fill=tk.X, pady=(0, 15))
 
-       # 1. Fetch only THIS teacher's courses
+        # --- 1. Fetch only THIS teacher's courses ---
         teacher_id = self.current_user['id']
         self.courses = self.db.get_courses_for_teacher(teacher_id)
         
@@ -198,28 +206,6 @@ class AutoAttendApp:
         )
         self.course_combo.pack(fill=tk.X)
         self.course_combo.bind("<<ComboboxSelected>>", self.on_course_selected)
-
-        # 2. AUTO-SELECT based on Timetable
-        active_course = self.db.get_active_course_for_teacher(teacher_id)
-        
-        if active_course:
-            # Format the string to match the combobox values
-            combo_value = f"{active_course.code} - {active_course.name}"
-            
-            # Check if this course is actually in our list (safety check)
-            if combo_value in course_options:
-                self.course_combo.set(combo_value)
-                self.current_course = active_course
-                self.lbl_session_course.config(text=f"Course: {active_course.code} (Auto-Selected)")
-                self.refresh_attendance_list()
-                
-                # Optional: Auto-enable the start button
-                self.btn_start.config(state="normal")
-        else:
-            if not self.courses:
-                self.course_combo.set("No courses assigned")
-            else:
-                self.course_combo.set("Select a course...")
 
         # 4. Session Info
         self.session_info_frame = ttk.LabelFrame(
@@ -240,7 +226,7 @@ class AutoAttendApp:
         )
         self.lbl_session_status.pack(anchor=tk.W)
 
-        # 5. Real-time Attendance List
+        # 5. Real-time Attendance List (Create self.tree FIRST)
         list_frame = ttk.LabelFrame(
             self.right_panel, text="Attendance List", padding=(5, 5, 5, 0)
         )
@@ -282,6 +268,21 @@ class AutoAttendApp:
         )
         btn_export.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=2)
 
+        # --- 7. AUTO-SELECT LOGIC (Moved to END so self.tree exists) ---
+        active_course = self.db.get_active_course_for_teacher(teacher_id)
+        
+        if active_course:
+            combo_value = f"{active_course.code} - {active_course.name}"
+            # Safety check: ensure course is in our list
+            if any(c.id == active_course.id for c in self.courses):
+                self.course_combo.set(combo_value)
+                self.current_course = active_course
+                self.lbl_session_course.config(text=f"Course: {active_course.code} (Auto-Selected)")
+                self.refresh_attendance_list() # Now safe to call
+        else:
+            if not self.courses:
+                self.course_combo.set("No courses assigned")
+        
     def setup_status_bar(self):
         self.status_bar = ttk.Frame(self.root, relief=tk.SUNKEN, padding=2)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
@@ -297,29 +298,37 @@ class AutoAttendApp:
             self.btn_start["state"] = "disabled"
             self.btn_stop["state"] = "normal"
             self.is_session_active = True
-            self.lbl_session_status.config(
-                text="Status: Active Session", foreground="green"
-            )
-            self.status_lbl.config(text="Camera Started")
+            
+            # Safe Update
+            if hasattr(self, 'lbl_session_status'):
+                self.lbl_session_status.config(text="Status: Active Session", foreground="green")
+            if hasattr(self, 'status_lbl'):
+                self.status_lbl.config(text="Camera Started")
+                
         except Exception as e:
-            messagebox.showerror("Camera Error", f"Failed to start camera. Make sure no other application is using it.\nError: {e}")
-            return
+            messagebox.showerror("Camera Error", f"Failed to start camera.\nError: {e}")
 
     def stop_camera(self):
+        # Stop hardware
         self.camera.stop()
+        self.is_session_active = False
+        
+        # Reset UI only if UI exists
         try:
-            self.btn_start["state"] = "normal"
-            self.btn_stop["state"] = "disabled"
-            self.is_session_active = False
-            self.lbl_session_status.config(text="Status: Inactive", foreground="red")
-            self.status_lbl.config(text="Camera Stopped")
+            if hasattr(self, 'btn_start'): self.btn_start["state"] = "normal"
+            if hasattr(self, 'btn_stop'): self.btn_stop["state"] = "disabled"
+            if hasattr(self, 'lbl_session_status'):
+                self.lbl_session_status.config(text="Status: Inactive", foreground="red")
+            if hasattr(self, 'status_lbl'):
+                self.status_lbl.config(text="Camera Stopped")
 
             # Reset Placeholder
-            placeholder = ImageTk.PhotoImage(Image.new("RGB", (640, 480), color="gray"))
-            self.video_label.configure(image=placeholder)
-            self.video_label.image = placeholder
-        except tk.TclError:
-            pass # Window might be destroyed
+            if hasattr(self, 'video_label'):
+                placeholder = ImageTk.PhotoImage(Image.new("RGB", (640, 480), color="gray"))
+                self.video_label.configure(image=placeholder)
+                self.video_label.image = placeholder
+        except:
+            pass 
 
     def on_course_selected(self, event):
         """Handle Combobox selection"""
@@ -329,8 +338,8 @@ class AutoAttendApp:
 
         # Parse "CS101 - Intro" -> "CS101"
         course_code = selection.split(" - ")[0]
-        courses = self.db.get_all_courses()
-        self.current_course = next((c for c in courses if c.code == course_code), None)
+        # We need to look inside self.courses now, not DB directly
+        self.current_course = next((c for c in self.courses if c.code == course_code), None)
 
         if self.current_course:
             self.lbl_session_course.config(text=f"Course: {self.current_course.code}")
@@ -363,7 +372,7 @@ class AutoAttendApp:
 
     def update_video_loop(self):
         """Core loop: Capture -> Detect -> Draw -> Update UI"""
-        # If logged out or window closed, stop
+        # If logged out or window closed, stop logic
         if not self.current_user:
             return
 
@@ -410,10 +419,11 @@ class AutoAttendApp:
             try:
                 img = Image.fromarray(frame_draw)
                 imgtk = ImageTk.PhotoImage(image=img)
-                self.video_label.imgtk = imgtk
-                self.video_label.configure(image=imgtk)
+                if hasattr(self, 'video_label'):
+                    self.video_label.imgtk = imgtk
+                    self.video_label.configure(image=imgtk)
             except:
-                pass # Window closed
+                pass
 
         # Schedule next update
         self.root.after(30, self.update_video_loop)
@@ -499,5 +509,6 @@ class AutoAttendApp:
         ttk.Button(top, text="Select Photos & Save", command=run_registration).pack(pady=20)
 
     def on_close(self):
+        """Clean shutdown handler."""
         self.stop_camera()
         self.root.destroy()
