@@ -728,12 +728,15 @@ class AutoAttendApp:
     # ------------------------------------------
     # TAB 2: MANUAL EDIT (New Feature)
     # ------------------------------------------
+    # ------------------------------------------
+    # TAB 2: MANUAL EDIT (Updated)
+    # ------------------------------------------
     def _build_manual_tab(self, parent):
         # --- CONTROL BAR ---
         ctrl_frame = ttk.Frame(parent, padding=10)
         ctrl_frame.pack(fill="x")
 
-        # Date Picker (Defaults to Today)
+        # Date Picker
         ttk.Label(ctrl_frame, text="Date (YYYY-MM-DD):").pack(side="left")
         self.ent_manual_date = ttk.Entry(ctrl_frame, width=12)
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -744,18 +747,13 @@ class AutoAttendApp:
         ttk.Label(ctrl_frame, text="Group:").pack(side="left", padx=(10, 0))
         self.cb_manual_group = ttk.Combobox(ctrl_frame, state="readonly", width=15)
         
-        # Populate Groups
         groups = self.db.get_all_groups()
         group_names = [g.name for g in groups]
         self.cb_manual_group["values"] = group_names
-        
-        # Save map for later (Name -> ID)
         self.group_name_map = {g.name: g.id for g in groups}
         
-        # Auto-select first group if available
         if group_names:
             self.cb_manual_group.current(0)
-            
         self.cb_manual_group.pack(side="left", padx=5)
 
         # Buttons
@@ -763,41 +761,40 @@ class AutoAttendApp:
         ttk.Button(ctrl_frame, text="💾 Save Changes", command=self.save_manual_list).pack(side="right")
 
         # --- TABLE ---
-        # Note: We add a Scrollbar because lists can get long
         list_frame = ttk.Frame(parent)
         list_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
+        # UPDATED COLUMNS: Added "time"
         self.tree_manual = ttk.Treeview(
             list_frame, 
-            columns=("roll", "name", "status"), 
+            columns=("roll", "name", "status", "time"), 
             show="headings"
         )
         
-        # Columns
         self.tree_manual.heading("roll", text="Roll No")
-        self.tree_manual.column("roll", width=80, anchor="center")
+        self.tree_manual.column("roll", width=60, anchor="center")
         
         self.tree_manual.heading("name", text="Name")
-        self.tree_manual.column("name", width=200)
+        self.tree_manual.column("name", width=180)
         
-        self.tree_manual.heading("status", text="Status (Click to Toggle)")
+        self.tree_manual.heading("status", text="Status (Dbl-Click)")
         self.tree_manual.column("status", width=100, anchor="center")
+        
+        self.tree_manual.heading("time", text="Time Detected")
+        self.tree_manual.column("time", width=100, anchor="center")
 
-        # Scrollbar
         sb = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree_manual.yview)
         self.tree_manual.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.tree_manual.pack(side="left", fill="both", expand=True)
 
-        # Colors
         self.tree_manual.tag_configure("PRESENT", foreground="green")
         self.tree_manual.tag_configure("ABSENT", foreground="red")
 
-        # Bind Click to toggle status
-        self.tree_manual.bind("<ButtonRelease-1>", self.on_manual_click)
+        # CHANGED BINDING: Now uses Double Click (<Double-1>)
+        self.tree_manual.bind("<Double-1>", self.on_manual_double_click)
 
     def load_manual_list(self):
-        """Loads students and fills in their status for the chosen date."""
         date_str = self.ent_manual_date.get()
         group_name = self.cb_manual_group.get()
         
@@ -805,83 +802,85 @@ class AutoAttendApp:
             messagebox.showwarning("Warning", "Please select a group first.")
             return
 
-        # Clear existing list
         for i in self.tree_manual.get_children():
             self.tree_manual.delete(i)
 
         try:
             group_id = self.group_name_map[group_name]
-
-            # 1. Fetch all students in this group
             students = self.db.get_students_by_group(group_id)
-
-            # 2. Fetch attendance records for this specific date
-            # Returns dict: {student_id: "PRESENT" or "ABSENT"}
-            attendance_record = self.db.get_session_attendance(group_id, date_str)
             
-            # Debugging: Check what the DB is actually returning
-            print(f"Loading {group_name} for {date_str}. Records found: {len(attendance_record)}")
+            # Fetch richer data (status + time)
+            att_data = self.db.get_session_attendance(group_id, date_str)
 
-            # 3. Populate Tree
             for s in students:
-                # If student is in the attendance record, use that status.
-                # If NOT in record, default to "ABSENT" (assuming they missed class or data wasn't taken).
-                status = attendance_record.get(s.id, "ABSENT")
-                
-                # Insert row
-                # We use iid=s.id so we can easily map back to the student database ID
+                # Get data or defaults
+                record = att_data.get(s.id, {"status": "ABSENT", "time": "-"})
+                status = record["status"]
+                time_val = record["time"] if record["time"] else "-"
+
                 self.tree_manual.insert(
                     "", 
                     "end", 
                     iid=s.id, 
-                    values=(s.roll_number, s.name, status), 
-                    tags=(status,) # This applies the color
+                    values=(s.roll_number, s.name, status, time_val), 
+                    tags=(status,)
                 )
-                
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load list: {e}")
+            messagebox.showerror("Error", f"Failed to load: {e}")
 
-    def on_manual_click(self, event):
-        """ robust click handler to toggle PRESENT/ABSENT """
-        # 1. Identify exactly which row was clicked based on Y-coordinate
+    def on_manual_double_click(self, event):
         row_id = self.tree_manual.identify_row(event.y)
         if not row_id:
             return
 
-        # 2. Get the current values of that row
-        # values = (Roll, Name, Status)
+        # values = (Roll, Name, Status, Time)
         values = self.tree_manual.item(row_id, "values")
-        if not values:
-            return
-
-        # 3. Toggle Logic
         current_status = values[2]
+        current_time = values[3]
+
+        # 1. Toggle Status
         new_status = "ABSENT" if current_status == "PRESENT" else "PRESENT"
 
-        # 4. Update the UI
-        # We must keep Roll and Name the same, only change Status
-        self.tree_manual.item(row_id, values=(values[0], values[1], new_status))
+        # 2. Time Logic (The Fix)
+        # If a time already exists (it is not "-"), WE KEEP IT.
+        # We only generate a new time if it is currently empty AND we are marking them present.
+        new_time = current_time
         
-        # Update the tag so the color changes immediately
+        if new_status == "PRESENT" and (new_time == "-" or not new_time):
+             new_time = datetime.now().strftime("%H:%M:%S")
+
+        # 3. Update Row
+        self.tree_manual.item(row_id, values=(values[0], values[1], new_status, new_time))
         self.tree_manual.item(row_id, tags=(new_status,))
 
-    
     def save_manual_list(self):
         date_str = self.ent_manual_date.get()
         group_name = self.cb_manual_group.get()
+        
+        if not group_name: return
         group_id = self.group_name_map[group_name]
 
-        # Build map {student_id: status}
+        # Build map {student_id: {'status': status, 'time': time}}
         att_map = {}
         for item_id in self.tree_manual.get_children():
-            # item_id is the student_id (we set iid=s.id)
-            val = self.tree_manual.item(item_id)["values"][2]  # Status column
-            att_map[int(item_id)] = val
+            vals = self.tree_manual.item(item_id)["values"]
+            status = vals[2]
+            time_val = vals[3]
+            
+            # If time is "-", we can't save it as a timestamp. 
+            # We'll pass None so the backend handles it (likely just saving the Date)
+            if time_val == "-":
+                time_val = None
+
+            att_map[int(item_id)] = {
+                "status": status,
+                "time": time_val
+            }
 
         if self.db.save_manual_attendance(group_id, date_str, att_map):
-            messagebox.showinfo("Success", "Attendance saved successfully.")
+            messagebox.showinfo("Success", "Attendance saved.")
         else:
-            messagebox.showerror("Error", "Failed to save attendance.")
+            messagebox.showerror("Error", "Failed to save.")
 
     def check_schedule(self):
         # Auto-detect what the teacher should be teaching right now

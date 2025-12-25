@@ -538,81 +538,91 @@ class DatabaseManager:
     def get_session_attendance(self, group_id, date_str):
         """
         Fetch attendance for a specific group on a specific date.
-        Uses LIKE for robust string matching.
+        Returns: { student_id: {'status': 'PRESENT', 'time': 'HH:MM:SS'} }
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # FIXED QUERY: Use LIKE instead of date()
-        # This matches "2025-10-25 09:00:00" using "2025-10-25%"
+        # Query now fetches timestamp as well
         query = """
-            SELECT student_id, status 
+            SELECT student_id, status, timestamp 
             FROM attendance 
             WHERE group_id=? AND timestamp LIKE ?
         """
-
-        # We append a wildcard '%' to the date_str
-        search_pattern = f"{date_str}%"
         
-        print(f"DEBUG: Searching for Group {group_id} with pattern '{search_pattern}'")
-
+        # Add wildcard for the LIKE clause
+        search_pattern = f"{date_str}%"
         cursor.execute(query, (group_id, search_pattern))
         rows = cursor.fetchall()
         conn.close()
-        
-        print(f"DEBUG: Found {len(rows)} records.")
 
-        return {row[0]: row[1] for row in rows}
-
-    def save_manual_attendance(self, group_id, date_str, attendance_map):
+        # Build a richer dictionary
+        att_data = {}
+        for r in rows:
+            # r[2] is the timestamp string (e.g., "2023-10-25 09:30:05")
+            # We just want the time part (split by space, take second part)
+            time_part = ""
+            if r[2] and " " in r[2]:
+                time_part = r[2].split(" ")[1] 
+            
+            att_data[r[0]] = {
+                "status": r[1],
+                "time": time_part
+            }
+            
+        return att_data
+    
+    def save_manual_attendance(self, group_id, date_str, att_map):
         """
-        Saves or updates attendance manually.
-        attendance_map: dict {student_id: "PRESENT" or "ABSENT"}
+        Saves attendance manually.
+        att_map format: { student_id: {'status': 'PRESENT', 'time': 'HH:MM:SS'} }
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        
         try:
-            # We treat '0' as course_id for manual edits if course context is loose
-            course_id = 0
+            for student_id, data in att_map.items():
+                status = data['status']
+                time_val = data['time']
 
-            # Timestamp for the specific date (set to noon)
-            manual_ts = f"{date_str} 12:00:00"
-
-            for student_id, status in attendance_map.items():
-                # 1. Check if record exists for this date
-                cursor.execute(
-                    """
-                    SELECT id FROM attendance 
-                    WHERE student_id=? AND group_id=? AND date(timestamp)=?
-                """,
-                    (student_id, group_id, date_str),
-                )
-
-                row = cursor.fetchone()
-
-                if row:
-                    # Update existing record's status
-                    cursor.execute(
-                        "UPDATE attendance SET status=? WHERE id=?", (status, row[0])
-                    )
+                # Construct the full timestamp
+                if time_val:
+                    # If we have a specific time, combine it with the date
+                    full_timestamp = f"{date_str} {time_val}"
                 else:
-                    # Insert new record
-                    cursor.execute(
-                        """
-                        INSERT INTO attendance (student_id, course_id, group_id, timestamp, status)
-                        VALUES (?, ?, ?, ?, ?)
-                    """,
-                        (student_id, course_id, group_id, manual_ts, status),
-                    )
+                    # If no time (e.g. absent/manual), just use mid-day or start of day
+                    # formatting it allows the 'LIKE' query to still find it later
+                    full_timestamp = f"{date_str} 00:00:00"
+
+                # UPSERT: Insert or Replace if exists
+                # We assume (student_id, group_id, date(timestamp)) logic is handled 
+                # OR we just check if a record exists for this day and update it.
+                
+                # 1. Delete existing record for this student on this day to avoid duplicates
+                # (Simple way to handle updates without complex SQL logic)
+                delete_query = """
+                    DELETE FROM attendance 
+                    WHERE student_id = ? 
+                    AND group_id = ? 
+                    AND timestamp LIKE ?
+                """
+                cursor.execute(delete_query, (student_id, group_id, f"{date_str}%"))
+
+                # 2. Insert new record
+                insert_query = """
+                    INSERT INTO attendance (student_id, group_id, timestamp, status, course_id)
+                    VALUES (?, ?, ?, ?, 0)
+                """
+                cursor.execute(insert_query, (student_id, group_id, full_timestamp, status))
 
             conn.commit()
             return True
         except Exception as e:
-            print(f"Manual Save Error: {e}")
+            print(f"Error saving manual attendance: {e}")
             return False
         finally:
             conn.close()
-
+    
     def toggle_attendance_status(self, student_id, group_id):
         """
         Toggles status between PRESENT and ABSENT for TODAY.
