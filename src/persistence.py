@@ -69,11 +69,13 @@ class DatabaseManager:
             """
             CREATE TABLE IF NOT EXISTS timetable (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                teacher_id INTEGER,
                 course_id INTEGER,
                 group_id INTEGER,
                 day_of_week INTEGER,
                 start_time TEXT, 
                 end_time TEXT,
+                FOREIGN KEY(teacher_id) REFERENCES users(id),
                 FOREIGN KEY(course_id) REFERENCES courses(id),
                 FOREIGN KEY(group_id) REFERENCES student_groups(id)
             )
@@ -99,7 +101,7 @@ class DatabaseManager:
 
         # Create Default Admin
         admin_user = "admin"
-        admin_pass = self._hash_password("Qqwerty123!")
+        admin_pass = self._hash_password("admin")
         try:
             cursor.execute(
                 "INSERT INTO users (username, password_hash, full_name, is_admin) VALUES (?, ?, ?, ?)",
@@ -291,57 +293,27 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def add_timetable_slot_direct(self, group_id, day, start, end):
-        # We insert '0' or NULL for course_id since we aren't using it.
+    # Update this method to accept teacher_id
+    def add_timetable_slot_direct(self, teacher_id, group_id, day, start, end):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
+            # We now insert teacher_id. 
+            # We can leave course_id as 0 if you don't have a specific course name.
             cursor.execute(
                 """
-                INSERT INTO timetable (day_of_week, start_time, end_time, group_id, course_id) 
-                VALUES (?, ?, ?, ?, 0)
+                INSERT INTO timetable (teacher_id, group_id, day_of_week, start_time, end_time, course_id) 
+                VALUES (?, ?, ?, ?, ?, 0)
             """,
-                (day, start, end, group_id),
+                (teacher_id, group_id, day, start, end),
             )
             conn.commit()
             return True
         except Exception as e:
-            print(e)
+            print(f"Error adding slot: {e}")
             return False
         finally:
             conn.close()
-
-    def get_active_session_info(self, teacher_id):
-        # Simplified: Just find a slot matching current time and group
-        # NOTE: This assumes the 'timetable' table logic links groups to time.
-        # Since we removed "Course", we just check if ANY group has a slot now.
-        now = datetime.now()
-        day = now.weekday()  # 0=Mon
-        current_time = now.strftime("%H:%M")
-
-        # We need to find which group corresponds to the logged-in teacher?
-        # If the database doesn't link Teacher->Timetable directly,
-        # this function might need to return ANY active group slot
-        # or rely on a specific link.
-        # For this fix, we will assume we just want the active group slot.
-
-        query = """
-            SELECT t.id, t.start_time, t.end_time, g.id as group_id, g.name as group_name
-            FROM timetable t
-            JOIN groups g ON t.group_id = g.id
-            WHERE t.day_of_week = ? 
-            AND ? BETWEEN t.start_time AND t.end_time
-        """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(query, (day, current_time))
-        row = cursor.fetchone()
-        conn.close()
-
-        if row:
-            return dict(row)
-        return None
 
     def add_course(self, name, teacher_id):
         conn = sqlite3.connect(self.db_path)
@@ -419,36 +391,39 @@ class DatabaseManager:
 
     # --- TEACHER / SESSION LOGIC ---
     def get_active_session_info(self, teacher_id):
-        """Returns the specific Course AND Group for right now."""
         now = datetime.now()
-        current_day = now.weekday()
+        day = now.weekday()  # 0=Mon
         current_time = now.strftime("%H:%M")
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        print(f"Checking schedule for Teacher {teacher_id} at {current_time}, day {day}")
 
+        # NEW QUERY: Checks teacher_id directly in timetable
         query = """
-            SELECT c.id, c.name, t.group_id, g.name
+            SELECT 
+                t.id, 
+                t.start_time, 
+                t.end_time, 
+                g.id as group_id, 
+                g.name as group_name
             FROM timetable t
-            JOIN courses c ON t.course_id = c.id
             JOIN student_groups g ON t.group_id = g.id
-            WHERE c.teacher_id = ?
-              AND t.day_of_week = ?
-              AND ? BETWEEN t.start_time AND t.end_time
-            LIMIT 1
+            WHERE t.teacher_id = ? 
+            AND t.day_of_week = ? 
+            AND ? BETWEEN t.start_time AND t.end_time
         """
-        cursor.execute(query, (teacher_id, current_day, current_time))
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute(query, (teacher_id, day, current_time))
         row = cursor.fetchone()
         conn.close()
 
         if row:
-            # Return dict with course info AND group info
-            return {
-                "course_id": row[0],
-                "course_name": row[1],
-                "group_id": row[2],
-                "group_name": row[3],
-            }
+            print(f"Found active session: {row['group_name']}")
+            return dict(row)
+        
+        print("No active session found.")
         return None
 
     def get_students_by_group(self, group_id):

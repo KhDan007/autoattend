@@ -491,7 +491,16 @@ class AutoAttendApp:
             self.tree_teachers.insert("", "end", values=(t["id"], t["full_name"]))
 
     def on_teacher_sel(self, e):
-        # When teacher is selected, show ALL groups (or filtered groups if you add that logic later)
+        sel = self.tree_teachers.selection()
+        if not sel:
+            return
+            
+        # --- NEW CODE: Capture the Teacher ID ---
+        # The treeview stores values=(id, name), so values[0] is the ID
+        self.admin_sel_teacher_id = self.tree_teachers.item(sel[0])["values"][0]
+        # --------------------------------------
+
+        # When teacher is selected, show ALL groups 
         self.refresh_academic_groups()
         self.clear_timetable_view()
 
@@ -542,20 +551,36 @@ class AutoAttendApp:
             self.tree_timetable.delete(i)
 
     def add_slot(self):
+        # 1. Validate Group Selection
         if (
             not hasattr(self, "admin_sel_group_id_academic")
             or not self.admin_sel_group_id_academic
         ):
-            messagebox.showwarning("Select", "Please select a group first.")
+            messagebox.showwarning("Select", "Please select a group (Step 2) first.")
             return
 
+        # 2. Validate Teacher Selection (NEW)
+        if (
+            not hasattr(self, "admin_sel_teacher_id")
+            or not self.admin_sel_teacher_id
+        ):
+            messagebox.showwarning("Select", "Please select a teacher (Step 1) first.")
+            return
+
+        # 3. Get Data
         day = self.combo_tt_day.current()
         start, end = self.ent_start.get(), self.ent_end.get()
 
+        # 4. Call Database with 5 arguments: Teacher, Group, Day, Start, End
         if self.db.add_timetable_slot_direct(
-            self.admin_sel_group_id_academic, day, start, end
+            self.admin_sel_teacher_id,         # <--- Now passing the real teacher ID
+            self.admin_sel_group_id_academic, 
+            day, 
+            start, 
+            end
         ):
             self.refresh_timetable()
+            messagebox.showinfo("Success", "Slot added successfully.")
         else:
             messagebox.showerror("Error", "Could not add slot.")
 
@@ -828,8 +853,6 @@ class AutoAttendApp:
         if session:
             self.active_session = session
 
-            # REMOVED: self.lbl_course.config(...) references
-
             self.lbl_group.config(
                 text=f"Active Group: {session['group_name']}",
                 font=("Helvetica", 12, "bold"),
@@ -839,7 +862,6 @@ class AutoAttendApp:
         else:
             self.active_session = None
 
-            # REMOVED: self.lbl_course.config(...) references
 
             self.lbl_group.config(text="No active class")
             self.lbl_status.config(text="Status: Off Duty", foreground="gray")
