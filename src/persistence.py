@@ -557,3 +557,120 @@ class DatabaseManager:
             return False
         finally:
             conn.close()
+
+    # ... inside DatabaseManager class ...
+
+    def get_session_attendance(self, group_id, date_str):
+        """
+        Fetch attendance for a specific group on a specific date.
+        date_str format: "YYYY-MM-DD"
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # We look for records matching the date portion of the timestamp
+        query = """
+            SELECT student_id, status 
+            FROM attendance 
+            WHERE group_id=? AND date(timestamp) = ?
+        """
+
+        cursor.execute(query, (group_id, date_str))
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Return a dictionary: {student_id: "PRESENT" (or ABSENT)}
+        return {row[0]: row[1] for row in rows}
+
+    def save_manual_attendance(self, group_id, date_str, attendance_map):
+        """
+        Saves or updates attendance manually.
+        attendance_map: dict {student_id: "PRESENT" or "ABSENT"}
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            # We treat '0' as course_id for manual edits if course context is loose
+            course_id = 0
+
+            # Timestamp for the specific date (set to noon)
+            manual_ts = f"{date_str} 12:00:00"
+
+            for student_id, status in attendance_map.items():
+                # 1. Check if record exists for this date
+                cursor.execute(
+                    """
+                    SELECT id FROM attendance 
+                    WHERE student_id=? AND group_id=? AND date(timestamp)=?
+                """,
+                    (student_id, group_id, date_str),
+                )
+
+                row = cursor.fetchone()
+
+                if row:
+                    # Update existing record's status
+                    cursor.execute(
+                        "UPDATE attendance SET status=? WHERE id=?", (status, row[0])
+                    )
+                else:
+                    # Insert new record
+                    cursor.execute(
+                        """
+                        INSERT INTO attendance (student_id, course_id, group_id, timestamp, status)
+                        VALUES (?, ?, ?, ?, ?)
+                    """,
+                        (student_id, course_id, group_id, manual_ts, status),
+                    )
+
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Manual Save Error: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def toggle_attendance_status(self, student_id, group_id):
+        """
+        Toggles status between PRESENT and ABSENT for TODAY.
+        Used for the Live View manual override.
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Find the record
+        cursor.execute(
+            """
+            SELECT id, status FROM attendance 
+            WHERE student_id=? AND group_id=? AND date(timestamp)=?
+        """,
+            (student_id, group_id, today),
+        )
+
+        row = cursor.fetchone()
+        new_status = "PRESENT"
+
+        if row:
+            # Toggle
+            current_status = row[1]
+            new_status = "ABSENT" if current_status == "PRESENT" else "PRESENT"
+            cursor.execute(
+                "UPDATE attendance SET status=? WHERE id=?", (new_status, row[0])
+            )
+        else:
+            # If no record exists yet, we create one as ABSENT (unusual, but safe) or PRESENT
+            # Usually this method is called on a row that appears in the UI
+            cursor.execute(
+                """
+                INSERT INTO attendance (student_id, course_id, group_id, timestamp, status)
+                VALUES (?, 0, ?, datetime('now','localtime'), 'PRESENT')
+            """,
+                (student_id, group_id),
+            )
+            new_status = "PRESENT"
+
+        conn.commit()
+        conn.close()
+        return new_status

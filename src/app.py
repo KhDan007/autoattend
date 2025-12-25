@@ -571,7 +571,7 @@ class AutoAttendApp:
     def build_teacher_dashboard(self):
         self._clear_window()
 
-        # Header
+        # --- Header ---
         h_frame = ttk.Frame(self.root, padding="10")
         h_frame.pack(side="top", fill="x")
         ttk.Label(
@@ -581,7 +581,25 @@ class AutoAttendApp:
         ).pack(side="left")
         ttk.Button(h_frame, text="Logout", command=self.logout).pack(side="right")
 
-        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        # --- Notebook (Tabs) ---
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Tab 1: Live Class
+        self.tab_live = ttk.Frame(notebook)
+        notebook.add(self.tab_live, text="Live Class")
+        self._build_live_tab(self.tab_live)
+
+        # Tab 2: Manual Edit (Past Classes)
+        self.tab_manual = ttk.Frame(notebook)
+        notebook.add(self.tab_manual, text="Manual / Past Records")
+        self._build_manual_tab(self.tab_manual)
+
+    # ------------------------------------------
+    # TAB 1: LIVE CLASS (Logic Moved Here)
+    # ------------------------------------------
+    def _build_live_tab(self, parent):
+        paned = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         left = ttk.Frame(paned, padding=5)
@@ -589,11 +607,12 @@ class AutoAttendApp:
         paned.add(left, weight=2)
         paned.add(right, weight=1)
 
-        # Camera
+        # Camera Section
         vid_frame = ttk.LabelFrame(left, text="Live Camera", padding=5)
         vid_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.video_label = ttk.Label(vid_frame)
         self.video_label.pack(fill=tk.BOTH, expand=True)
+        # Placeholder image
         self.video_label.image = ImageTk.PhotoImage(
             Image.new("RGB", (640, 480), "gray")
         )
@@ -610,12 +629,10 @@ class AutoAttendApp:
         )
         self.btn_stop.pack(side=tk.LEFT, padx=5)
 
-        # Session Info
+        # Session Info Section
         info_frame = ttk.LabelFrame(right, text="Current Session", padding=10)
         info_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.lbl_course = ttk.Label(info_frame, text="Course: --")
-        self.lbl_course.pack(anchor="w")
         self.lbl_group = ttk.Label(info_frame, text="Group: --")
         self.lbl_group.pack(anchor="w")
         self.lbl_status = ttk.Label(
@@ -623,14 +640,16 @@ class AutoAttendApp:
         )
         self.lbl_status.pack(anchor="w")
 
-        # Check Schedule Button
         ttk.Button(
             info_frame, text="⟳ Refresh Schedule", command=self.check_schedule
         ).pack(pady=5, fill="x")
 
-        # Attendance List
-        list_frame = ttk.LabelFrame(right, text="Attendance", padding=(5, 5, 5, 0))
+        # Attendance List (With Double-Click Override)
+        list_frame = ttk.LabelFrame(
+            right, text="Attendance (Double-Click to Toggle)", padding=(5, 5, 5, 0)
+        )
         list_frame.pack(fill=tk.BOTH, expand=True)
+
         self.tree_att = ttk.Treeview(
             list_frame, columns=("name", "status"), show="headings"
         )
@@ -638,16 +657,169 @@ class AutoAttendApp:
         self.tree_att.heading("status", text="Status")
         self.tree_att.column("status", width=80, anchor="center")
         self.tree_att.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.tree_att.tag_configure("present", foreground="green", background="#E8F5E9")
 
-        # Action
+        # Tags for colors
+        self.tree_att.tag_configure("PRESENT", foreground="green", background="#E8F5E9")
+        self.tree_att.tag_configure("ABSENT", foreground="red", background="#FFEBEE")
+
+        # BIND DOUBLE CLICK
+        self.tree_att.bind("<Double-1>", self.on_live_list_double_click)
+
+        # Export
         ttk.Button(right, text="Export CSV", command=self.export_csv).pack(
             fill="x", pady=10
         )
 
-        # Initial Check
+        # Init
         self.check_schedule()
         self.update_video_loop()
+
+    def on_live_list_double_click(self, event):
+        """Toggle status between PRESENT and ABSENT on double click."""
+        if not self.active_session:
+            return
+
+        item_id = self.tree_att.identify_row(event.y)
+        if not item_id:
+            return
+
+        # Get student ID from our map (reverse lookup needed or store it in iid)
+        # Note: In refresh_att_list, we stored map[student_id] = iid.
+        # Let's reverse find the student_id
+        student_id = None
+        for sid, iid in self.student_tree_map.items():
+            if iid == item_id:
+                student_id = sid
+                break
+
+        if student_id:
+            group_id = self.active_session["group_id"]
+            # Toggle in DB
+            new_status = self.db.toggle_attendance_status(student_id, group_id)
+            # Update UI
+            self.tree_att.set(item_id, "status", new_status)
+            self.tree_att.item(item_id, tags=(new_status,))
+
+    # ------------------------------------------
+    # TAB 2: MANUAL EDIT (New Feature)
+    # ------------------------------------------
+    def _build_manual_tab(self, parent):
+        # Control Bar
+        ctrl_frame = ttk.Frame(parent, padding=10)
+        ctrl_frame.pack(fill="x")
+
+        ttk.Label(ctrl_frame, text="Date (YYYY-MM-DD):").pack(side="left")
+        self.ent_manual_date = ttk.Entry(ctrl_frame, width=12)
+        self.ent_manual_date.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self.ent_manual_date.pack(side="left", padx=5)
+
+        # Group Selector (Simple Combobox for Teacher's Groups)
+        ttk.Label(ctrl_frame, text="Group:").pack(side="left", padx=(10, 0))
+        self.cb_manual_group = ttk.Combobox(ctrl_frame, state="readonly", width=15)
+
+        # Populate Groups (Just all groups for now for simplicity, or filter by teacher)
+        groups = self.db.get_all_groups()
+        group_names = [g.name for g in groups]
+        self.cb_manual_group["values"] = group_names
+        if group_names:
+            self.cb_manual_group.current(0)
+        self.cb_manual_group.pack(side="left", padx=5)
+
+        # Map names to IDs
+        self.group_name_map = {g.name: g.id for g in groups}
+
+        ttk.Button(ctrl_frame, text="Load List", command=self.load_manual_list).pack(
+            side="left", padx=10
+        )
+        ttk.Button(
+            ctrl_frame, text="💾 Save Changes", command=self.save_manual_list
+        ).pack(side="right")
+
+        # Table
+        self.tree_manual = ttk.Treeview(
+            parent, columns=("id", "name", "status"), show="headings"
+        )
+        self.tree_manual.heading("id", text="Roll No")
+        self.tree_manual.heading("name", text="Name")
+        self.tree_manual.heading("status", text="Status (Click to Toggle)")
+
+        self.tree_manual.column("id", width=80)
+        self.tree_manual.column("status", width=100)
+
+        self.tree_manual.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.tree_manual.tag_configure("PRESENT", foreground="green")
+        self.tree_manual.tag_configure("ABSENT", foreground="red")
+
+        # Bind Click to toggle
+        self.tree_manual.bind("<ButtonRelease-1>", self.on_manual_click)
+
+    def load_manual_list(self):
+        date_str = self.ent_manual_date.get()
+        group_name = self.cb_manual_group.get()
+        if not group_name:
+            return
+
+        group_id = self.group_name_map[group_name]
+
+        # 1. Get all students in group
+        students = self.db.get_students_by_group(group_id)
+
+        # 2. Get existing attendance for this date
+        existing_att = self.db.get_session_attendance(group_id, date_str)
+
+        # 3. Clear Tree
+        for i in self.tree_manual.get_children():
+            self.tree_manual.delete(i)
+
+        # 4. Populate
+        for s in students:
+            # Default to ABSENT if no record, or use existing status
+            status = existing_att.get(s.id, "ABSENT")
+            self.tree_manual.insert(
+                "",
+                "end",
+                iid=s.id,
+                values=(s.roll_number, s.name, status),
+                tags=(status,),
+            )
+
+    def on_manual_click(self, event):
+        region = self.tree_manual.identify("region", event.x, event.y)
+        if region == "cell":
+            # Check if clicked on Status column (index 2) or generally the row
+            # Treeview column detection is tricky, so we'll just toggle row selection
+            item_id = self.tree_manual.focus()
+            if not item_id:
+                return
+
+            # Toggle Status
+            curr_vals = self.tree_manual.item(item_id)["values"]
+            # values comes back as a list. Name is index 1, Status index 2
+            curr_status = curr_vals[2]
+
+            new_status = "ABSENT" if curr_status == "PRESENT" else "PRESENT"
+
+            # Update UI
+            self.tree_manual.set(item_id, "status", new_status)
+            self.tree_manual.item(item_id, tags=(new_status,))
+
+    def save_manual_list(self):
+        date_str = self.ent_manual_date.get()
+        group_name = self.cb_manual_group.get()
+        group_id = self.group_name_map[group_name]
+
+        # Build map {student_id: status}
+        att_map = {}
+        for item_id in self.tree_manual.get_children():
+            # item_id is the student_id (we set iid=s.id)
+            val = self.tree_manual.item(item_id)["values"][2]  # Status column
+            att_map[int(item_id)] = val
+
+        if self.db.save_manual_attendance(group_id, date_str, att_map):
+            messagebox.showinfo("Success", "Attendance saved successfully.")
+        else:
+            messagebox.showerror("Error", "Failed to save attendance.")
 
     def check_schedule(self):
         # Auto-detect what the teacher should be teaching right now
@@ -655,8 +827,9 @@ class AutoAttendApp:
 
         if session:
             self.active_session = session
-            # REMOVED: Course Label Update
-            self.lbl_course.config(text="")
+
+            # REMOVED: self.lbl_course.config(...) references
+
             self.lbl_group.config(
                 text=f"Active Group: {session['group_name']}",
                 font=("Helvetica", 12, "bold"),
@@ -665,7 +838,9 @@ class AutoAttendApp:
             self.refresh_att_list()
         else:
             self.active_session = None
-            self.lbl_course.config(text="")
+
+            # REMOVED: self.lbl_course.config(...) references
+
             self.lbl_group.config(text="No active class")
             self.lbl_status.config(text="Status: Off Duty", foreground="gray")
             for i in self.tree_att.get_children():
@@ -680,17 +855,18 @@ class AutoAttendApp:
             return
 
         gid = self.active_session["group_id"]
-        # No CID anymore
-
+        # Assuming course_id is not strictly needed for fetch, or pass 0
         students = self.db.get_students_by_group(gid)
-        # You might need to update get_todays_attendance to not require course_id
-        # For now pass 0 or None for course_id
-        att_data = self.db.get_todays_attendance(0, gid)
+        att_data = self.db.get_todays_attendance(0, gid)  # 0 = course_id ignored
 
         for s in students:
+            # Default to ABSENT if not found
             status = att_data.get(s.id, "ABSENT")
-            tag = "present" if status == "PRESENT" else "absent"
-            iid = self.tree_att.insert("", "end", values=(s.name, status), tags=(tag,))
+
+            # INSERT with Correct Tag
+            iid = self.tree_att.insert(
+                "", "end", values=(s.name, status), tags=(status,)
+            )
             self.student_tree_map[s.id] = iid
 
     def start_session_camera(self):
@@ -708,19 +884,31 @@ class AutoAttendApp:
             messagebox.showerror("Error", str(e))
 
     def stop_camera(self):
-        # Always stop the hardware logic
-        self.camera.stop()
+        # 1. Always stop the hardware camera logic first
+        if hasattr(self, "camera"):
+            self.camera.stop()
+        
         self.is_session_active = False
 
-        # Only try to update the buttons/labels if they actually exist
-        # (This prevents the crash during the login screen)
-        if hasattr(self, "btn_start"):
-            self.btn_start["state"] = "normal"
-            self.btn_stop["state"] = "disabled"
-            self.lbl_status.config(text="Status: Paused", foreground="orange")
-            # Reset placeholder image
-            if hasattr(self, "video_label"):
+        # 2. Only update UI buttons if they exist AND are valid widgets
+        try:
+            # Check if button exists in memory AND is a valid visible widget
+            if hasattr(self, "btn_start") and self.btn_start.winfo_exists():
+                self.btn_start["state"] = "normal"
+            
+            if hasattr(self, "btn_stop") and self.btn_stop.winfo_exists():
+                self.btn_stop["state"] = "disabled"
+                
+            if hasattr(self, "lbl_status") and self.lbl_status.winfo_exists():
+                self.lbl_status.config(text="Status: Paused", foreground="orange")
+                
+            if hasattr(self, "video_label") and self.video_label.winfo_exists():
+                # Reset placeholder image
                 self.video_label.configure(image=self.video_label.image)
+
+        except Exception:
+            # If widgets are already destroyed or invalid, we just ignore it
+            pass
 
     def update_video_loop(self):
         if not self.current_user or self.current_user.get("is_admin") == 1:
