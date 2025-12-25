@@ -242,18 +242,27 @@ class AutoAttendApp:
         name = simpledialog.askstring("New Group", "Group Name:")
         if name:
             if self.db.add_group(name):
+                # 1. Update the list in Tab 1 (current tab)
                 self.refresh_group_list()
+                
+                # 2. FIX: Update the dropdown in Tab 2 immediately
+                if hasattr(self, "combo_all_groups"):
+                    self.refresh_all_groups_combo()
             else:
                 messagebox.showerror("Error", "Group exists or invalid.")
 
     def admin_delete_group(self):
         if not self.admin_sel_group_id:
             return
-        if messagebox.askyesno(
-            "Confirm", "Delete Group? All students in it will be deleted."
-        ):
+        if messagebox.askyesno("Confirm", "Delete Group? All students in it will be deleted."):
             self.db.delete_group(self.admin_sel_group_id)
+            
+            # 1. Update the list in Tab 1
             self.refresh_group_list()
+            
+            # 2. FIX: Update the dropdown in Tab 2
+            if hasattr(self, "combo_all_groups"):
+                self.refresh_all_groups_combo()
 
     # --- LOGIC: STUDENTS ---
     def refresh_student_list_for_group(self):
