@@ -4,6 +4,7 @@ from PIL import Image, ImageTk
 import cv2
 import csv
 from datetime import datetime
+import time
 
 # Local Imports
 from src.hardware import CameraManager
@@ -16,6 +17,9 @@ class AutoAttendApp:
         self.root = root
         self.root.title("AutoAttend - School Management System")
         self.root.geometry("1200x800")
+
+        self.prev_frame_time = 0
+        self.new_frame_time = 0
 
         self.db = DatabaseManager()
         self.camera = CameraManager()
@@ -1028,7 +1032,20 @@ class AutoAttendApp:
 
         frame = self.camera.get_frame()
         if frame is not None:
-            # Detection
+            # 1. Calculate FPS
+            self.new_frame_time = time.time()
+            
+            # Avoid division by zero
+            fps = 0
+            if self.prev_frame_time > 0:
+                fps = 1 / (self.new_frame_time - self.prev_frame_time)
+            
+            self.prev_frame_time = self.new_frame_time
+            
+            # Convert FPS to integer string
+            fps_text = f"FPS: {int(fps)}"
+
+            # 2. Run Detection (Your existing logic)
             dets = self.vision.detect_and_identify(frame)
             draw = frame.copy()
 
@@ -1039,19 +1056,23 @@ class AutoAttendApp:
                     draw, name, (l, b + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
                 )
 
-                # Logic: Mark Attendance if belongs to current group
+                # Logic: Mark Attendance
                 if self.is_session_active and self.active_session and sid:
-                    # Check if student is in list (belongs to group)
                     if sid in self.student_tree_map:
-                        # Use .get() to avoid crashing if course_id is missing
+                        # Use .get() for safety as discussed
                         cid = self.active_session.get("course_id", 0)
-                        gid = self.active_session["group_id"]
+                        gid = self.active_session.get("group_id", 0)
+                        
                         if self.db.mark_attendance(sid, cid, gid):
-                            # Update UI
                             iid = self.student_tree_map[sid]
                             self.tree_att.set(iid, "status", "PRESENT")
                             self.tree_att.item(iid, tags=("present",))
 
+            # 3. Draw FPS on the frame (Top-Left corner)
+            # (Image, Text, Position, Font, Scale, Color, Thickness)
+            cv2.putText(draw, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+            # 4. Display
             img = ImageTk.PhotoImage(Image.fromarray(draw))
             self.video_label.configure(image=img)
             self.video_label.imgtk = img
