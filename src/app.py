@@ -990,7 +990,8 @@ class AutoAttendApp:
                 if self.is_session_active and self.active_session and sid:
                     # Check if student is in list (belongs to group)
                     if sid in self.student_tree_map:
-                        cid = self.active_session["course_id"]
+                        # Use .get() to avoid crashing if course_id is missing
+                        cid = self.active_session.get("course_id", 0)
                         gid = self.active_session["group_id"]
                         if self.db.mark_attendance(sid, cid, gid):
                             # Update UI
