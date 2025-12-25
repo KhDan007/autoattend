@@ -729,106 +729,143 @@ class AutoAttendApp:
     # TAB 2: MANUAL EDIT (New Feature)
     # ------------------------------------------
     def _build_manual_tab(self, parent):
-        # Control Bar
+        # --- CONTROL BAR ---
         ctrl_frame = ttk.Frame(parent, padding=10)
         ctrl_frame.pack(fill="x")
 
+        # Date Picker (Defaults to Today)
         ttk.Label(ctrl_frame, text="Date (YYYY-MM-DD):").pack(side="left")
         self.ent_manual_date = ttk.Entry(ctrl_frame, width=12)
-        self.ent_manual_date.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        self.ent_manual_date.insert(0, today_str)
         self.ent_manual_date.pack(side="left", padx=5)
 
-        # Group Selector (Simple Combobox for Teacher's Groups)
+        # Group Selector
         ttk.Label(ctrl_frame, text="Group:").pack(side="left", padx=(10, 0))
         self.cb_manual_group = ttk.Combobox(ctrl_frame, state="readonly", width=15)
-
-        # Populate Groups (Just all groups for now for simplicity, or filter by teacher)
+        
+        # Populate Groups
         groups = self.db.get_all_groups()
         group_names = [g.name for g in groups]
         self.cb_manual_group["values"] = group_names
+        
+        # Save map for later (Name -> ID)
+        self.group_name_map = {g.name: g.id for g in groups}
+        
+        # Auto-select first group if available
         if group_names:
             self.cb_manual_group.current(0)
+            
         self.cb_manual_group.pack(side="left", padx=5)
 
-        # Map names to IDs
-        self.group_name_map = {g.name: g.id for g in groups}
+        # Buttons
+        ttk.Button(ctrl_frame, text="🔄 Load List", command=self.load_manual_list).pack(side="left", padx=10)
+        ttk.Button(ctrl_frame, text="💾 Save Changes", command=self.save_manual_list).pack(side="right")
 
-        ttk.Button(ctrl_frame, text="Load List", command=self.load_manual_list).pack(
-            side="left", padx=10
-        )
-        ttk.Button(
-            ctrl_frame, text="💾 Save Changes", command=self.save_manual_list
-        ).pack(side="right")
+        # --- TABLE ---
+        # Note: We add a Scrollbar because lists can get long
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Table
         self.tree_manual = ttk.Treeview(
-            parent, columns=("id", "name", "status"), show="headings"
+            list_frame, 
+            columns=("roll", "name", "status"), 
+            show="headings"
         )
-        self.tree_manual.heading("id", text="Roll No")
+        
+        # Columns
+        self.tree_manual.heading("roll", text="Roll No")
+        self.tree_manual.column("roll", width=80, anchor="center")
+        
         self.tree_manual.heading("name", text="Name")
+        self.tree_manual.column("name", width=200)
+        
         self.tree_manual.heading("status", text="Status (Click to Toggle)")
+        self.tree_manual.column("status", width=100, anchor="center")
 
-        self.tree_manual.column("id", width=80)
-        self.tree_manual.column("status", width=100)
+        # Scrollbar
+        sb = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree_manual.yview)
+        self.tree_manual.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree_manual.pack(side="left", fill="both", expand=True)
 
-        self.tree_manual.pack(fill="both", expand=True, padx=10, pady=10)
-
+        # Colors
         self.tree_manual.tag_configure("PRESENT", foreground="green")
         self.tree_manual.tag_configure("ABSENT", foreground="red")
 
-        # Bind Click to toggle
+        # Bind Click to toggle status
         self.tree_manual.bind("<ButtonRelease-1>", self.on_manual_click)
 
     def load_manual_list(self):
+        """Loads students and fills in their status for the chosen date."""
         date_str = self.ent_manual_date.get()
         group_name = self.cb_manual_group.get()
+        
         if not group_name:
+            messagebox.showwarning("Warning", "Please select a group first.")
             return
 
-        group_id = self.group_name_map[group_name]
-
-        # 1. Get all students in group
-        students = self.db.get_students_by_group(group_id)
-
-        # 2. Get existing attendance for this date
-        existing_att = self.db.get_session_attendance(group_id, date_str)
-
-        # 3. Clear Tree
+        # Clear existing list
         for i in self.tree_manual.get_children():
             self.tree_manual.delete(i)
 
-        # 4. Populate
-        for s in students:
-            # Default to ABSENT if no record, or use existing status
-            status = existing_att.get(s.id, "ABSENT")
-            self.tree_manual.insert(
-                "",
-                "end",
-                iid=s.id,
-                values=(s.roll_number, s.name, status),
-                tags=(status,),
-            )
+        try:
+            group_id = self.group_name_map[group_name]
+
+            # 1. Fetch all students in this group
+            students = self.db.get_students_by_group(group_id)
+
+            # 2. Fetch attendance records for this specific date
+            # Returns dict: {student_id: "PRESENT" or "ABSENT"}
+            attendance_record = self.db.get_session_attendance(group_id, date_str)
+            
+            # Debugging: Check what the DB is actually returning
+            print(f"Loading {group_name} for {date_str}. Records found: {len(attendance_record)}")
+
+            # 3. Populate Tree
+            for s in students:
+                # If student is in the attendance record, use that status.
+                # If NOT in record, default to "ABSENT" (assuming they missed class or data wasn't taken).
+                status = attendance_record.get(s.id, "ABSENT")
+                
+                # Insert row
+                # We use iid=s.id so we can easily map back to the student database ID
+                self.tree_manual.insert(
+                    "", 
+                    "end", 
+                    iid=s.id, 
+                    values=(s.roll_number, s.name, status), 
+                    tags=(status,) # This applies the color
+                )
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load list: {e}")
 
     def on_manual_click(self, event):
-        region = self.tree_manual.identify("region", event.x, event.y)
-        if region == "cell":
-            # Check if clicked on Status column (index 2) or generally the row
-            # Treeview column detection is tricky, so we'll just toggle row selection
-            item_id = self.tree_manual.focus()
-            if not item_id:
-                return
+        """ robust click handler to toggle PRESENT/ABSENT """
+        # 1. Identify exactly which row was clicked based on Y-coordinate
+        row_id = self.tree_manual.identify_row(event.y)
+        if not row_id:
+            return
 
-            # Toggle Status
-            curr_vals = self.tree_manual.item(item_id)["values"]
-            # values comes back as a list. Name is index 1, Status index 2
-            curr_status = curr_vals[2]
+        # 2. Get the current values of that row
+        # values = (Roll, Name, Status)
+        values = self.tree_manual.item(row_id, "values")
+        if not values:
+            return
 
-            new_status = "ABSENT" if curr_status == "PRESENT" else "PRESENT"
+        # 3. Toggle Logic
+        current_status = values[2]
+        new_status = "ABSENT" if current_status == "PRESENT" else "PRESENT"
 
-            # Update UI
-            self.tree_manual.set(item_id, "status", new_status)
-            self.tree_manual.item(item_id, tags=(new_status,))
+        # 4. Update the UI
+        # We must keep Roll and Name the same, only change Status
+        self.tree_manual.item(row_id, values=(values[0], values[1], new_status))
+        
+        # Update the tag so the color changes immediately
+        self.tree_manual.item(row_id, tags=(new_status,))
 
+    
     def save_manual_list(self):
         date_str = self.ent_manual_date.get()
         group_name = self.cb_manual_group.get()

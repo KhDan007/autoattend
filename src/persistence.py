@@ -397,10 +397,10 @@ class DatabaseManager:
 
         print(f"Checking schedule for Teacher {teacher_id} at {current_time}, day {day}")
 
-        # NEW QUERY: Checks teacher_id directly in timetable
         query = """
             SELECT 
                 t.id, 
+                t.course_id,
                 t.start_time, 
                 t.end_time, 
                 g.id as group_id, 
@@ -538,23 +538,30 @@ class DatabaseManager:
     def get_session_attendance(self, group_id, date_str):
         """
         Fetch attendance for a specific group on a specific date.
-        date_str format: "YYYY-MM-DD"
+        Uses LIKE for robust string matching.
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # We look for records matching the date portion of the timestamp
+        # FIXED QUERY: Use LIKE instead of date()
+        # This matches "2025-10-25 09:00:00" using "2025-10-25%"
         query = """
             SELECT student_id, status 
             FROM attendance 
-            WHERE group_id=? AND date(timestamp) = ?
+            WHERE group_id=? AND timestamp LIKE ?
         """
 
-        cursor.execute(query, (group_id, date_str))
+        # We append a wildcard '%' to the date_str
+        search_pattern = f"{date_str}%"
+        
+        print(f"DEBUG: Searching for Group {group_id} with pattern '{search_pattern}'")
+
+        cursor.execute(query, (group_id, search_pattern))
         rows = cursor.fetchall()
         conn.close()
+        
+        print(f"DEBUG: Found {len(rows)} records.")
 
-        # Return a dictionary: {student_id: "PRESENT" (or ABSENT)}
         return {row[0]: row[1] for row in rows}
 
     def save_manual_attendance(self, group_id, date_str, attendance_map):
