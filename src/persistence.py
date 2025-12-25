@@ -182,12 +182,27 @@ class DatabaseManager:
     def delete_group(self, group_id):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        # Delete group, its students, and its timetable slots
-        cursor.execute("DELETE FROM student_groups WHERE id=?", (group_id,))
-        cursor.execute("DELETE FROM students WHERE group_id=?", (group_id,))
-        cursor.execute("DELETE FROM timetable WHERE group_id=?", (group_id,))
-        conn.commit()
-        conn.close()
+        
+        try:
+            # 1. Delete the group
+            cursor.execute("DELETE FROM student_groups WHERE id=?", (group_id,))
+            
+            # 2. Also delete related links in the teacher_groups table
+            cursor.execute("DELETE FROM teacher_groups WHERE group_id=?", (group_id,))
+            
+            cursor.execute("""
+                UPDATE sqlite_sequence 
+                SET seq = COALESCE((SELECT MAX(id) FROM student_groups), 0) 
+                WHERE name = 'student_groups'
+            """)
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error deleting group: {e}")
+            return False
+        finally:
+            conn.close()
 
     # --- STUDENT MANAGEMENT ---
     def generate_next_roll_number(self):
