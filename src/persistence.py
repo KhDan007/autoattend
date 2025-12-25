@@ -666,3 +666,59 @@ class DatabaseManager:
         conn.commit()
         conn.close()
         return new_status
+
+    # ==========================================
+    # TEACHER - GROUP ASSIGNMENT (New Feature)
+    # ==========================================
+    def init_teacher_group_link(self):
+        """Creates the linking table if it doesn't exist."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS teacher_groups (
+                teacher_id INTEGER,
+                group_id INTEGER,
+                PRIMARY KEY (teacher_id, group_id)
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def assign_teacher_to_group(self, teacher_id, group_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("INSERT OR IGNORE INTO teacher_groups (teacher_id, group_id) VALUES (?, ?)", 
+                           (teacher_id, group_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(e)
+            return False
+        finally:
+            conn.close()
+
+    def remove_teacher_from_group(self, teacher_id, group_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM teacher_groups WHERE teacher_id=? AND group_id=?", 
+                       (teacher_id, group_id))
+        conn.commit()
+        conn.close()
+
+    def get_groups_for_teacher(self, teacher_id):
+        """Returns only the groups assigned to this teacher."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        query = """
+            SELECT g.id, g.name 
+            FROM student_groups g
+            JOIN teacher_groups tg ON g.id = tg.group_id
+            WHERE tg.teacher_id = ?
+        """
+        cursor.execute(query, (teacher_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        # Return as simple objects or dicts
+        return [dict(row) for row in rows]

@@ -415,74 +415,83 @@ class AutoAttendApp:
     # --- TAB 3: ACADEMIC (Timetable links Groups now) ---
 
     def _build_admin_academic_tab(self, parent):
+        # Ensure DB table exists
+        self.db.init_teacher_group_link()
+        
         frame = ttk.Frame(parent, padding="10")
         frame.pack(fill="both", expand=True)
 
-        # COL 1: Select Teacher (Context)
-        # Note: Even if the direct link is weak in the DB, selecting a teacher
-        # helps us visualize who we are scheduling for (conceptually).
+        # === COL 1: Select Teacher ===
         col1 = ttk.LabelFrame(frame, text="1. Select Teacher", padding="5")
         col1.pack(side="left", fill="both", expand=True)
-        self.tree_teachers = ttk.Treeview(
-            col1, columns=("id", "name"), show="headings", height=10
-        )
+        
+        self.tree_teachers = ttk.Treeview(col1, columns=("id", "name"), show="headings")
         self.tree_teachers.heading("id", text="ID")
         self.tree_teachers.heading("name", text="Name")
         self.tree_teachers.column("id", width=30)
         self.tree_teachers.pack(fill="both", expand=True)
         self.tree_teachers.bind("<<TreeviewSelect>>", self.on_teacher_sel)
 
-        # COL 2: Select Group (REPLACED "Select Course")
-        col2 = ttk.LabelFrame(frame, text="2. Select Group", padding="5")
-        col2.pack(side="left", fill="both", expand=True)
-        self.tree_academic_groups = ttk.Treeview(
-            col2, columns=("id", "name"), show="headings", height=10
-        )
-        self.tree_academic_groups.heading("id", text="ID")
-        self.tree_academic_groups.heading("name", text="Group Name")
-        self.tree_academic_groups.column("id", width=30)
-        self.tree_academic_groups.pack(fill="both", expand=True, pady=(0, 5))
-        self.tree_academic_groups.bind("<<TreeviewSelect>>", self.on_academic_group_sel)
-        # No "Add Course" button anymore
 
-        # COL 3: Timetable (For Selected Group)
+        # === COL 2: Manage Groups (Assigned Only) ===
+        col2 = ttk.LabelFrame(frame, text="2. Assigned Groups", padding="5")
+        col2.pack(side="left", fill="both", expand=True, padx=5)
+
+        # Top: List of assigned groups
+        self.tree_academic_groups = ttk.Treeview(col2, columns=("id", "name"), show="headings")
+        self.tree_academic_groups.heading("id", text="ID")
+        self.tree_academic_groups.heading("name", text="Name")
+        self.tree_academic_groups.column("id", width=30)
+        self.tree_academic_groups.pack(side="top", fill="both", expand=True)
+        self.tree_academic_groups.bind("<<TreeviewSelect>>", self.on_academic_group_sel)
+
+        # Bottom: Add/Remove Controls
+        grp_ctrl = ttk.Frame(col2)
+        grp_ctrl.pack(side="bottom", fill="x", pady=5)
+        
+        ttk.Label(grp_ctrl, text="Assign New Group:").pack(fill="x")
+        self.combo_all_groups = ttk.Combobox(grp_ctrl, state="readonly")
+        self.combo_all_groups.pack(fill="x", pady=2)
+        
+        btn_frame = ttk.Frame(grp_ctrl)
+        btn_frame.pack(fill="x")
+        ttk.Button(btn_frame, text="⬇ Assign", command=self.admin_assign_group).pack(side="left", fill="x", expand=True)
+        ttk.Button(btn_frame, text="❌ Remove", command=self.admin_remove_group).pack(side="right", fill="x", expand=True)
+
+
+        # === COL 3: Timetable ===
         col3 = ttk.LabelFrame(frame, text="3. Timetable", padding="5")
         col3.pack(side="left", fill="both", expand=True)
-        self.tree_timetable = ttk.Treeview(
-            col3, columns=("day", "time"), show="headings", height=10
-        )
+        
+        self.tree_timetable = ttk.Treeview(col3, columns=("day", "time"), show="headings")
         self.tree_timetable.heading("day", text="Day")
         self.tree_timetable.heading("time", text="Time")
-        self.tree_timetable.column("day", width=50)
-        self.tree_timetable.pack(fill="both", expand=True, pady=(0, 5))
+        self.tree_timetable.column("day", width=40)
+        self.tree_timetable.pack(fill="both", expand=True)
 
-        # Timetable Controls (Simplified: No Group Dropdown)
+        # Timetable Inputs
         t_ctrl = ttk.Frame(col3)
-        t_ctrl.pack(fill="x")
-
-        self.combo_tt_day = ttk.Combobox(
-            t_ctrl,
-            values=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
-            state="readonly",
-            width=10,
-        )
+        t_ctrl.pack(fill="x", pady=5)
+        
+        self.combo_tt_day = ttk.Combobox(t_ctrl, values=["Mon", "Tue", "Wed", "Thu", "Fri"], width=5, state="readonly")
         self.combo_tt_day.current(0)
-        self.combo_tt_day.pack(side="left", padx=2)
-
-        self.ent_start = ttk.Entry(t_ctrl, width=6)
+        self.combo_tt_day.pack(side="left")
+        
+        self.ent_start = ttk.Entry(t_ctrl, width=5)
         self.ent_start.insert(0, "09:00")
         self.ent_start.pack(side="left", padx=2)
-        ttk.Label(t_ctrl, text="-").pack(side="left")
-        self.ent_end = ttk.Entry(t_ctrl, width=6)
+        
+        self.ent_end = ttk.Entry(t_ctrl, width=5)
         self.ent_end.insert(0, "10:00")
         self.ent_end.pack(side="left", padx=2)
-
-        ttk.Button(t_ctrl, text="+ Add Slot", command=self.add_slot).pack(
-            side="left", padx=5
-        )
-        ttk.Button(t_ctrl, text="- Del", command=self.del_slot).pack(side="right")
+        
+        ttk.Button(t_ctrl, text="+", width=3, command=self.add_slot).pack(side="left", padx=5)
+        ttk.Button(t_ctrl, text="-", width=3, command=self.del_slot).pack(side="right")
 
         self.refresh_teacher_list()
+        self.refresh_all_groups_combo()
+
+    # --- LOGIC ---
 
     def refresh_teacher_list(self):
         for i in self.tree_teachers.get_children():
@@ -490,35 +499,71 @@ class AutoAttendApp:
         for t in self.db.get_all_teachers():
             self.tree_teachers.insert("", "end", values=(t["id"], t["full_name"]))
 
+    def refresh_all_groups_combo(self):
+        """Populates the dropdown with ALL available groups in the system."""
+        groups = self.db.get_all_groups()
+        self.combo_all_groups["values"] = [f"{g.id}: {g.name}" for g in groups]
+        if groups:
+            self.combo_all_groups.current(0)
+
     def on_teacher_sel(self, e):
         sel = self.tree_teachers.selection()
-        if not sel:
-            return
-            
-        # --- NEW CODE: Capture the Teacher ID ---
-        # The treeview stores values=(id, name), so values[0] is the ID
+        if not sel: return
         self.admin_sel_teacher_id = self.tree_teachers.item(sel[0])["values"][0]
-        # --------------------------------------
-
-        # When teacher is selected, show ALL groups 
-        self.refresh_academic_groups()
+        
+        self.refresh_assigned_groups()
         self.clear_timetable_view()
 
-    def refresh_academic_groups(self):
+    def refresh_assigned_groups(self):
+        """Only show groups assigned to this specific teacher."""
         for i in self.tree_academic_groups.get_children():
             self.tree_academic_groups.delete(i)
-        # Display all groups so the teacher can pick which one they are scheduling
-        for g in self.db.get_all_groups():
-            self.tree_academic_groups.insert("", "end", values=(g.id, g.name))
+        
+        if not hasattr(self, 'admin_sel_teacher_id'): return
+
+        # Call the new DB method
+        assigned_groups = self.db.get_groups_for_teacher(self.admin_sel_teacher_id)
+        
+        for g in assigned_groups:
+            # g is a dict or row object
+            self.tree_academic_groups.insert("", "end", values=(g['id'], g['name']))
+
+    def admin_assign_group(self):
+        """Links the selected group in dropdown to the current teacher."""
+        if not hasattr(self, 'admin_sel_teacher_id'):
+            messagebox.showwarning("Warning", "Select a teacher first.")
+            return
+
+        sel_str = self.combo_all_groups.get()
+        if not sel_str: return
+        
+        # Parse ID from "ID: Name" string
+        group_id = int(sel_str.split(":")[0])
+        
+        if self.db.assign_teacher_to_group(self.admin_sel_teacher_id, group_id):
+            self.refresh_assigned_groups()
+        else:
+            messagebox.showerror("Error", "Could not assign group.")
+
+    def admin_remove_group(self):
+        """Removes the link between teacher and group."""
+        if not hasattr(self, 'admin_sel_teacher_id'): return
+        
+        sel = self.tree_academic_groups.selection()
+        if not sel:
+            messagebox.showwarning("Warning", "Select an assigned group to remove.")
+            return
+            
+        group_id = self.tree_academic_groups.item(sel[0])["values"][0]
+        
+        self.db.remove_teacher_from_group(self.admin_sel_teacher_id, group_id)
+        self.refresh_assigned_groups()
+        self.clear_timetable_view()
 
     def on_academic_group_sel(self, e):
         sel = self.tree_academic_groups.selection()
-        if not sel:
-            return
-        # Store selected Group ID instead of Course ID
-        self.admin_sel_group_id_academic = self.tree_academic_groups.item(sel[0])[
-            "values"
-        ][0]
+        if not sel: return
+        self.admin_sel_group_id_academic = self.tree_academic_groups.item(sel[0])["values"][0]
         self.refresh_timetable()
 
     def refresh_timetable(self):
