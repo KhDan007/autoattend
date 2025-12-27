@@ -854,19 +854,35 @@ class AutoAttendApp:
             messagebox.showwarning("Warning", "Please select a group first.")
             return
 
+        # 1. Clear the table first
         for i in self.tree_manual.get_children():
             self.tree_manual.delete(i)
 
         try:
             group_id = self.group_name_map[group_name]
-            students = self.db.get_students_by_group(group_id)
             
-            # Fetch richer data (status + time)
+            # 2. Fetch Existing Attendance
+            # Returns a dictionary: {student_id: {'status': '...', 'time': '...'}, ...}
             att_data = self.db.get_session_attendance(group_id, date_str)
 
+            # 3. CHECK: If no data exists, ask the user what to do
+            if not att_data:
+                # If the user clicks 'No', we stop here (list remains empty).
+                confirm = messagebox.askyesno(
+                    "No Records Found", 
+                    f"No attendance found for {group_name} on {date_str}.\n\n"
+                    "Do you want to create a NEW attendance sheet for this date?"
+                )
+                if not confirm:
+                    return
+
+            # 4. If we are here, we either have data OR the user said "Yes" to create new.
+            students = self.db.get_students_by_group(group_id)
+
             for s in students:
-                # Get data or defaults
+                # Get data if it exists, otherwise Default to ABSENT for new sheets
                 record = att_data.get(s.id, {"status": "ABSENT", "time": "-"})
+                
                 status = record["status"]
                 time_val = record["time"] if record["time"] else "-"
 
@@ -877,6 +893,7 @@ class AutoAttendApp:
                     values=(s.roll_number, s.name, status, time_val), 
                     tags=(status,)
                 )
+        
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load: {e}")
 
