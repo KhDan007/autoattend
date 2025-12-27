@@ -748,11 +748,6 @@ class AutoAttendApp:
         # BIND DOUBLE CLICK
         self.tree_att.bind("<Double-1>", self.on_live_list_double_click)
 
-        # Export
-        ttk.Button(right, text="Export CSV", command=self.export_csv).pack(
-            fill="x", pady=10
-        )
-
         # Init
         self.check_schedule()
         self.update_video_loop()
@@ -783,11 +778,8 @@ class AutoAttendApp:
             self.tree_att.set(item_id, "status", new_status)
             self.tree_att.item(item_id, tags=(new_status,))
 
-    # ------------------------------------------
-    # TAB 2: MANUAL EDIT (New Feature)
-    # ------------------------------------------
-    # ------------------------------------------
-    # TAB 2: MANUAL EDIT (Updated)
+
+    # TAB 2: MANUAL EDIT
     # ------------------------------------------
     def _build_manual_tab(self, parent):
         # --- CONTROL BAR ---
@@ -816,6 +808,8 @@ class AutoAttendApp:
 
         # Buttons
         ttk.Button(ctrl_frame, text="🔄 Load List", command=self.load_manual_list).pack(side="left", padx=10)
+        # Export
+        ttk.Button(ctrl_frame, text="Export CSV", command=self.export_csv).pack(padx=10, side="left")
         ttk.Button(ctrl_frame, text="💾 Save Changes", command=self.save_manual_list).pack(side="right")
 
         # --- TABLE ---
@@ -1080,29 +1074,47 @@ class AutoAttendApp:
         self.root.after(30, self.update_video_loop)
 
     def export_csv(self):
-        if not self.active_session:
+        # 1. Get Context Data (Group and Date from the UI inputs)
+        group_name = self.cb_manual_group.get()
+        date_str = self.ent_manual_date.get()
+        
+        # Check if there is data to export
+        if not self.tree_manual.get_children():
+            messagebox.showwarning("Warning", "No data to export. Please load a list first.")
             return
+
         try:
-            path = filedialog.asksaveasfilename(defaultextension=".csv")
+            path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")]
+            )
+            
             if path:
-                with open(path, "w", newline="") as f:
+                with open(path, "w", newline="", encoding="utf-8") as f:
                     w = csv.writer(f)
-                    w.writerow(
-                        ["Student", "Status", "Date", "Group"]
-                    )  # Removed Course Column
-                    for iid in self.tree_att.get_children():
-                        vals = self.tree_att.item(iid)["values"]
-                        w.writerow(
-                            [
-                                vals[0],
-                                vals[1],
-                                datetime.now().date(),
-                                self.active_session["group_name"],
-                            ]
-                        )
-                messagebox.showinfo("Success", "Exported")
+                    
+                    # 2. Write the Header (Added Date)
+                    w.writerow(["Date", "Group", "Roll_No", "Name", "Status", "Time"])
+                    
+                    # 3. Iterate through the visible rows
+                    for iid in self.tree_manual.get_children():
+                        # Treeview values are: (roll, name, status, time)
+                        vals = self.tree_manual.item(iid)["values"]
+                        
+                        row_data = [
+                            date_str,    # Date from the text box
+                            group_name,  # Group from the dropdown
+                            vals[0],     # Roll_No
+                            vals[1],     # Name
+                            vals[2],     # Status
+                            vals[3]      # Time
+                        ]
+                        w.writerow(row_data)
+                        
+                messagebox.showinfo("Success", "Exported successfully.")
+                
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Error", f"Export failed: {str(e)}")
 
     def on_close(self):
         self.stop_camera()
