@@ -1091,18 +1091,23 @@ class AutoAttendApp:
         self.root.after(30, self.update_video_loop)
 
     def export_csv(self):
-        # 1. Get Context Data (Group and Date from the UI inputs)
+        # 1. Get Context Data
         group_name = self.cb_manual_group.get()
         date_str = self.ent_manual_date.get()
         
-        # Check if there is data to export
+        # Check if table is populated
         if not self.tree_manual.get_children():
             messagebox.showwarning("Warning", "No data to export. Please load a list first.")
             return
 
+        # 2. Generate Default Filename: "YYYY-MM-DD_GroupName.csv"
+        safe_group = group_name.replace(" ", "_")
+        default_filename = f"{date_str}_{safe_group}.csv"
+
         try:
             path = filedialog.asksaveasfilename(
                 defaultextension=".csv",
+                initialfile=default_filename,
                 filetypes=[("CSV files", "*.csv")]
             )
             
@@ -1110,18 +1115,16 @@ class AutoAttendApp:
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     w = csv.writer(f)
                     
-                    # 2. Write the Header (Added Date)
+                    # Header
                     w.writerow(["Date", "Group", "Roll_No", "Name", "Status", "Time"])
                     
-                    # 3. Iterate through the visible rows
+                    # Rows
                     for iid in self.tree_manual.get_children():
-                        # Treeview values are: (roll, name, status, time)
                         vals = self.tree_manual.item(iid)["values"]
-                        
                         row_data = [
-                            date_str,    # Date from the text box
-                            group_name,  # Group from the dropdown
-                            vals[0],     # Roll_No
+                            date_str,    # Date
+                            group_name,  # Group
+                            vals[0],     # Roll
                             vals[1],     # Name
                             vals[2],     # Status
                             vals[3]      # Time
