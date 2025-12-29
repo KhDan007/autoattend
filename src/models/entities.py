@@ -16,12 +16,6 @@ class Student:
     group_name: str = "" # Helper for display
 
 @dataclass
-class Course:
-    id: int
-    name: str
-    teacher_id: int
-
-@dataclass
 class TimetableSlot:
     id: int
     course_id: int

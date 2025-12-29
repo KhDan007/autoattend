@@ -2,7 +2,7 @@ import sqlite3
 import os
 import hashlib
 from datetime import datetime
-from src.models.entities import Student, Course, Group, TimetableSlot
+from src.models.entities import Student, Group, TimetableSlot
 
 
 class DatabaseManager:
