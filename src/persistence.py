@@ -283,9 +283,6 @@ class DatabaseManager:
             {"id": r[0], "username": r[1], "full_name": r[2]} for r in cursor.fetchall()
         ]
 
-    def get_groups_for_teacher(self, teacher_id):
-        return self.get_all_groups()
-
     def get_timetable_for_teacher_and_group(self, teacher_id, group_id):
         query = """
             SELECT * FROM timetable 
