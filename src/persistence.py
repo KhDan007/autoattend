@@ -14,8 +14,7 @@ class DatabaseManager:
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-
-        # 1. Users (Teachers/Admins)
+        # 1. Users
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -27,8 +26,7 @@ class DatabaseManager:
             )
         """
         )
-
-        # 2. Student Groups (NEW: e.g. "CS-SL-26-1")
+        # 2. Student Groups
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS student_groups (
@@ -37,8 +35,7 @@ class DatabaseManager:
             )
         """
         )
-
-        # 3. Students (Updated: Linked to Group)
+        # 3. Students
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS students (
@@ -51,54 +48,35 @@ class DatabaseManager:
             )
         """
         )
-
-        # 4. Courses
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS courses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                teacher_id INTEGER,
-                FOREIGN KEY(teacher_id) REFERENCES users(id)
-            )
-        """
-        )
-
-        # 5. Timetable (Updated: Links Course + Group + Time)
+        # 4. Timetable
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS timetable (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 teacher_id INTEGER,
-                course_id INTEGER,
                 group_id INTEGER,
                 day_of_week INTEGER,
                 start_time TEXT, 
                 end_time TEXT,
                 FOREIGN KEY(teacher_id) REFERENCES users(id),
-                FOREIGN KEY(course_id) REFERENCES courses(id),
                 FOREIGN KEY(group_id) REFERENCES student_groups(id)
             )
         """
         )
-
-        # 6. Attendance
+        # 5. Attendance
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS attendance (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id INTEGER,
-                course_id INTEGER,
                 group_id INTEGER, 
                 timestamp DATETIME,
                 status TEXT,
                 FOREIGN KEY(student_id) REFERENCES students(id),
-                FOREIGN KEY(course_id) REFERENCES courses(id),
                 FOREIGN KEY(group_id) REFERENCES student_groups(id)
             )
         """
         )
-
         # Create Default Admin
         admin_user = "admin"
         admin_pass = self._hash_password("admin")
@@ -274,7 +252,7 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
-    # --- ACADEMIC MANAGEMENT (Courses & Timetable) ---
+    # --- ACADEMIC MANAGEMENT (Groups & Timetable) ---
     def get_all_teachers(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -305,17 +283,14 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    # Update this method to accept teacher_id
     def add_timetable_slot_direct(self, teacher_id, group_id, day, start, end):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
-            # We now insert teacher_id. 
-            # We can leave course_id as 0 if you don't have a specific course name.
             cursor.execute(
                 """
-                INSERT INTO timetable (teacher_id, group_id, day_of_week, start_time, end_time, course_id) 
-                VALUES (?, ?, ?, ?, ?, 0)
+                INSERT INTO timetable (teacher_id, group_id, day_of_week, start_time, end_time) 
+                VALUES (?, ?, ?, ?, ?)
             """,
                 (teacher_id, group_id, day, start, end),
             )
@@ -327,72 +302,16 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def add_course(self, name, teacher_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO courses (name, teacher_id) VALUES (?, ?)", (name, teacher_id)
-        )
-        conn.commit()
-        conn.close()
-
-    def get_courses_for_teacher(self, teacher_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, name, teacher_id FROM courses WHERE teacher_id=?", (teacher_id,)
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        return [Course(id=r[0], name=r[1], teacher_id=r[2]) for r in rows]
-
-    def delete_course(self, course_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM courses WHERE id=?", (course_id,))
-        cursor.execute("DELETE FROM timetable WHERE course_id=?", (course_id,))
-        conn.commit()
-        conn.close()
-
     # --- TIMETABLE (UPDATED) ---
-    def add_timetable_slot(self, course_id, group_id, day, start, end):
+    def add_timetable_slot(self, group_id, day, start, end):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO timetable (course_id, group_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-            (course_id, group_id, day, start, end),
+            "INSERT INTO timetable (group_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?)",
+            (group_id, day, start, end),
         )
         conn.commit()
         conn.close()
-
-    def get_timetable_for_course(self, course_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        # Join with Groups to get group name
-        cursor.execute(
-            """
-            SELECT t.id, t.course_id, t.group_id, t.day_of_week, t.start_time, t.end_time, g.name
-            FROM timetable t
-            JOIN student_groups g ON t.group_id = g.id
-            WHERE t.course_id=? 
-            ORDER BY t.day_of_week, t.start_time
-        """,
-            (course_id,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        return [
-            TimetableSlot(
-                id=r[0],
-                course_id=r[1],
-                group_id=r[2],
-                day_of_week=r[3],
-                start_time=r[4],
-                end_time=r[5],
-                group_name=r[6],
-            )
-            for r in rows
-        ]
 
     def delete_timetable_slot(self, slot_id):
         conn = sqlite3.connect(self.db_path)
@@ -412,7 +331,6 @@ class DatabaseManager:
         query = """
             SELECT 
                 t.id, 
-                t.course_id,
                 t.start_time, 
                 t.end_time, 
                 g.id as group_id, 
@@ -458,24 +376,24 @@ class DatabaseManager:
             for r in rows
         ]
 
-    def mark_attendance(self, student_id, course_id, group_id):
+    def mark_attendance(self, student_id, group_id):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT id FROM attendance 
-            WHERE student_id=? AND course_id=? AND date(timestamp)=date('now')
+            WHERE student_id=? AND date(timestamp)=date('now')
         """,
-            (student_id, course_id),
+            (student_id)
         )
 
         if not cursor.fetchone():
             cursor.execute(
                 """
-                INSERT INTO attendance (student_id, course_id, group_id, timestamp, status) 
-                VALUES (?, ?, ?, datetime('now','localtime'), 'PRESENT')
+                INSERT INTO attendance (student_id, group_id, timestamp, status) 
+                VALUES (?, ?, datetime('now','localtime'), 'PRESENT')
             """,
-                (student_id, course_id, group_id),
+                (student_id, group_id),
             )
             conn.commit()
             conn.close()
@@ -483,15 +401,15 @@ class DatabaseManager:
         conn.close()
         return False
 
-    def get_todays_attendance(self, course_id, group_id):
+    def get_todays_attendance(self, group_id):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT student_id, status FROM attendance 
-            WHERE course_id=? AND group_id=? AND date(timestamp)=date('now')
+            WHERE AND group_id=? AND date(timestamp)=date('now')
         """,
-            (course_id, group_id),
+            (group_id),
         )
         return {r[0]: r[1] for r in cursor.fetchall()}
 
@@ -622,8 +540,8 @@ class DatabaseManager:
 
                 # 2. Insert new record
                 insert_query = """
-                    INSERT INTO attendance (student_id, group_id, timestamp, status, course_id)
-                    VALUES (?, ?, ?, ?, 0)
+                    INSERT INTO attendance (student_id, group_id, timestamp, status)
+                    VALUES (?, ?, ?, ?)
                 """
                 cursor.execute(insert_query, (student_id, group_id, full_timestamp, status))
 
@@ -668,8 +586,8 @@ class DatabaseManager:
             # Usually this method is called on a row that appears in the UI
             cursor.execute(
                 """
-                INSERT INTO attendance (student_id, course_id, group_id, timestamp, status)
-                VALUES (?, 0, ?, datetime('now','localtime'), 'PRESENT')
+                INSERT INTO attendance (student_id, group_id, timestamp, status)
+                VALUES (?, ?, datetime('now','localtime'), 'PRESENT')
             """,
                 (student_id, group_id),
             )

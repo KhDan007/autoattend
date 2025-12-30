@@ -18,7 +18,6 @@ class Student:
 @dataclass
 class TimetableSlot:
     id: int
-    course_id: int
     group_id: int
     day_of_week: int
     start_time: str
