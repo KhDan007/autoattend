@@ -22,13 +22,13 @@ class CameraManager:
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(self.camera_index)
 
-        # 2. Basic Check: Did the driver acknowledge the device?
+        # 2. Did the driver acknowledge the device?
         if not self.cap.isOpened():
             raise RuntimeError(
                 f"Could not open camera {self.camera_index}. Is it plugged in?"
             )
 
-        # 3. ROBUST CHECK: Try to actually read a frame
+        # 3. Try to read a frame
         # This catches the case where another app has locked the camera stream
         ret, frame = self.cap.read()
         if not ret:
@@ -46,7 +46,7 @@ class CameraManager:
     def stop(self):
         self.running = False
         if self.thread:
-            self.thread.join()  # Wait for thread to finish safely
+            self.thread.join()
         if self.cap.isOpened():
             self.cap.release()
 

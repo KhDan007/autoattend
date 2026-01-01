@@ -384,7 +384,7 @@ class DatabaseManager:
             SELECT id FROM attendance 
             WHERE student_id=? AND date(timestamp)=date('now')
         """,
-            (student_id)
+            (student_id,)
         )
 
         if not cursor.fetchone():
@@ -402,14 +402,15 @@ class DatabaseManager:
         return False
 
     def get_todays_attendance(self, group_id):
+        print("Fetching today's attendance for group:", group_id)
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT student_id, status FROM attendance 
-            WHERE AND group_id=? AND date(timestamp)=date('now')
+            WHERE group_id=? AND date(timestamp)=date('now')
         """,
-            (group_id),
+            (group_id,),
         )
         return {r[0]: r[1] for r in cursor.fetchall()}
 
