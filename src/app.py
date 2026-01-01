@@ -37,12 +37,6 @@ class AutoAttendApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.show_login_screen()
 
-    def _setup_styles(self):
-        style = ttk.Style()
-        style.configure("Title.TLabel", font=("Helvetica", 24, "bold"))
-        style.configure("Header.TLabel", font=("Helvetica", 14, "bold"))
-        style.configure("SubHeader.TLabel", font=("Helvetica", 11, "bold"))
-
     def load_global_data(self):
         try:
             all_students = self.db.get_all_students()
@@ -50,6 +44,12 @@ class AutoAttendApp:
             self.vision.load_encodings(valid_students)
         except Exception as e:
             print(f"Vision Load Warning: {e}")
+
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.configure("Title.TLabel", font=("Helvetica", 24, "bold"))
+        style.configure("Header.TLabel", font=("Helvetica", 14, "bold"))
+        style.configure("SubHeader.TLabel", font=("Helvetica", 11, "bold"))
 
     def _clear_window(self):
         for widget in self.root.winfo_children():
@@ -686,6 +686,19 @@ class AutoAttendApp:
             self.lbl_status.config(text="Status: Off Duty", foreground="gray")
             for i in self.tree_att.get_children(): self.tree_att.delete(i)
 
+    def start_session_camera(self):
+        if not self.active_session:
+            messagebox.showwarning("No Class", "No class is scheduled for right now.")
+            return
+        try:
+            self.camera.start()
+            self.btn_start['state'] = 'disabled'
+            self.btn_stop['state'] = 'normal'
+            self.is_session_active = True
+            self.lbl_status.config(text="Status: Active Session", foreground="green")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
     def refresh_att_list(self):
         for i in self.tree_att.get_children(): self.tree_att.delete(i)
         self.student_tree_map.clear()
@@ -701,19 +714,6 @@ class AutoAttendApp:
             status = att_data.get(s.id, "ABSENT")
             iid = self.tree_att.insert("", "end", values=(s.name, status), tags=(status,))
             self.student_tree_map[s.id] = iid
-
-    def start_session_camera(self):
-        if not self.active_session:
-            messagebox.showwarning("No Class", "No class is scheduled for right now.")
-            return
-        try:
-            self.camera.start()
-            self.btn_start['state'] = 'disabled'
-            self.btn_stop['state'] = 'normal'
-            self.is_session_active = True
-            self.lbl_status.config(text="Status: Active Session", foreground="green")
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
 
     def stop_camera(self):
         if hasattr(self, 'camera'):
