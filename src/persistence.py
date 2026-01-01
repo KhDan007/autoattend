@@ -323,7 +323,7 @@ class DatabaseManager:
     # --- TEACHER / SESSION LOGIC ---
     def get_active_session_info(self, teacher_id):
         now = datetime.now()
-        day = now.weekday()  # 0=Mon
+        day = now.weekday()
         current_time = now.strftime("%H:%M")
 
         print(f"Checking schedule for Teacher {teacher_id} at {current_time}, day {day}")
@@ -443,12 +443,8 @@ class DatabaseManager:
             del data["id"]
             data["group_id"] = new_group_id
 
-            # --- FIX: MODIFY ROLL NUMBER TO BE UNIQUE ---
-            # Append a suffix (e.g., if ID is "123", try "123_copy")
-            # Or use a timestamp to ensure uniqueness
             original_roll = str(data["roll_number"])
             data["roll_number"] = f"{original_roll}_{new_group_id}"
-            # --------------------------------------------
 
             columns = ", ".join(data.keys())
             placeholders = ", ".join("?" * len(data))
@@ -464,8 +460,6 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    # ... inside DatabaseManager class ...
-
     def get_session_attendance(self, group_id, date_str):
         """
         Fetch attendance for a specific group on a specific date.
@@ -474,24 +468,19 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Query now fetches timestamp as well
         query = """
             SELECT student_id, status, timestamp 
             FROM attendance 
             WHERE group_id=? AND timestamp LIKE ?
         """
         
-        # Add wildcard for the LIKE clause
         search_pattern = f"{date_str}%"
         cursor.execute(query, (group_id, search_pattern))
         rows = cursor.fetchall()
         conn.close()
 
-        # Build a richer dictionary
         att_data = {}
         for r in rows:
-            # r[2] is the timestamp string (e.g., "2023-10-25 09:30:05")
-            # We just want the time part (split by space, take second part)
             time_part = ""
             if r[2] and " " in r[2]:
                 time_part = r[2].split(" ")[1] 
