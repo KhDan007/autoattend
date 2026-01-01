@@ -58,14 +58,14 @@ class CameraManager:
         while self.running:
             ret, frame = self.cap.read()
             if ret:
-                # Convert BGR (OpenCV standard) to RGB (UI standard) immediately
+                # Convert BGR (OpenCV standard) to RGB (UI standard)
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                # Critical Section: Acquire lock before writing to shared memory
+                # Acquire lock before writing to shared memory
                 with self.lock:
                     self.current_frame = frame_rgb
 
-            # Sleep 10ms to prevent CPU core saturation (approx 100 FPS cap)
+            # Sleep 10ms to prevent CPU core saturation
             time.sleep(0.01)
 
     def get_frame(self):
