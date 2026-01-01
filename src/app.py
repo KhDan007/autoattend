@@ -130,7 +130,6 @@ class AutoAttendApp:
         self._build_admin_people_tab(self.tab_people)
         
         self.tab_academic = ttk.Frame(notebook)
-        # FIX 1: Renamed from "Courses & Timetable" to remove trace
         notebook.add(self.tab_academic, text="2. Teacher Schedules") 
         self._build_admin_academic_tab(self.tab_academic)
 
@@ -446,7 +445,6 @@ class AutoAttendApp:
         if not hasattr(self, 'admin_sel_group_id_academic') or not self.admin_sel_group_id_academic:
             return
         
-        # FIX 2: Passed self.admin_sel_teacher_id instead of 0 to get the correct schedule
         slots = self.db.get_timetable_for_teacher_and_group(self.admin_sel_teacher_id, self.admin_sel_group_id_academic)
         
         days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -564,7 +562,6 @@ class AutoAttendApp:
         
         if student_id:
             group_id = self.active_session['group_id']
-            # FIX 3: Backend check. toggle_attendance_status must handle (student_id, group_id)
             new_status = self.db.toggle_attendance_status(student_id, group_id)
             self.tree_att.set(item_id, "status", new_status)
             self.tree_att.item(item_id, tags=(new_status,))
@@ -626,7 +623,6 @@ class AutoAttendApp:
         
         try:
             group_id = self.group_name_map[group_name]
-            # No changes needed here, get_session_attendance(group_id, date) is correct
             att_data = self.db.get_session_attendance(group_id, date_str)
             
             if not att_data:
@@ -681,7 +677,6 @@ class AutoAttendApp:
         session = self.db.get_active_session_info(self.current_user['id'])
         if session:
             self.active_session = session
-            # Correctly uses 'group_name' without needing course info
             self.lbl_group.config(text=f"Active Group: {session['group_name']}", font=("Helvetica", 12, "bold"))
             self.lbl_status.config(text="Status: Ready", foreground="orange")
             self.refresh_att_list()
@@ -700,7 +695,6 @@ class AutoAttendApp:
         gid = self.active_session['group_id']
         students = self.db.get_students_by_group(gid)
         
-        # FIX 3: Ensure get_todays_attendance in persistence.py accepts just (group_id)
         att_data = self.db.get_todays_attendance(gid)
         
         for s in students:
@@ -763,7 +757,6 @@ class AutoAttendApp:
                     if sid in self.student_tree_map:
                         gid = self.active_session.get('group_id', 0)
                         
-                        # FIX 3: Backend check. mark_attendance must handle (student_id, group_id)
                         if self.db.mark_attendance(sid, gid):
                             iid = self.student_tree_map[sid]
                             self.tree_att.set(iid, "status", "PRESENT")

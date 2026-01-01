@@ -3,7 +3,6 @@ import numpy as np
 import os
 import cv2
 
-
 class FaceRecognizer:
     def __init__(self, encoding_dir="data/encodings"):
         self.encoding_dir = encoding_dir
