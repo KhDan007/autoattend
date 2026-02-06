@@ -6,10 +6,18 @@ import time
 class CameraManager:
     def __init__(self, camera_index=0):
         self.camera_index = camera_index
-        self.cap = cv2.VideoCapture(self.camera_index)
+        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+
+        # Reduce capture load
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+
+        # If supported, reduce buffering (prevents “lag behind real time”)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
         self.current_frame = None
         self.running = False
-        # Lock ensures thread-safety when writing/reading the shared frame buffer
         self.lock = threading.Lock()
         self.thread = None
 

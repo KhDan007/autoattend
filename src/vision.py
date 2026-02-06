@@ -2,48 +2,69 @@ import face_recognition
 import numpy as np
 import os
 import cv2
+import time
+
 
 class FaceRecognizer:
-    # Configure recognition settings and load existing encodings.
-    # threshold controls how strict matching is (lower threshold = fewer false positives).
-    # scale_factor reduces the frame size before recognition to improve speed and maintain FPS.
-    # Encodings are loaded into memory once so matching each frame is fast.
+    """
+    Performance-focused FaceRecognizer that keeps your existing return format:
+    returns [(student_id, name, (top,right,bottom,left)), ...]
+    """
+
     def __init__(self, encoding_dir="data/encodings"):
         self.encoding_dir = encoding_dir
         os.makedirs(self.encoding_dir, exist_ok=True)
+
         self.known_encodings = []
         self.known_ids = []
         self.student_names = {}  # Map ID to Name for UI labels
 
-    # Load all stored student encodings from disk into memory.
-    # Each encoding file is a NumPy array named with the student's id (e.g., 12.npy).
-    # Keeping encodings in memory avoids re-reading files every frame, improving performance.
+        # --- Performance knobs (safe defaults) ---
+        self.scale_factor = 0.20          # smaller = faster (0.20–0.25 recommended)
+        self.threshold = 0.50             # same as your current threshold
+        self.detect_model = "hog"         # fastest on CPU; do not use "cnn" on Windows CPU
+        self.process_every_n_frames = 3   # run heavy recognition every N frames
+        self.max_fps_for_recognition = 12 # cap heavy recognition calls per second
+
+        # --- Cache state ---
+        self._frame_count = 0
+        self._last_results = []
+        self._last_run_time = 0.0
+
+        # Precomputed matrix for fast distance calculation
+        self._enc_matrix = None  # shape: (N, 128)
+
     def load_encodings(self, students):
         """Loads encodings from disk into memory."""
         self.known_encodings = []
         self.known_ids = []
         self.student_names = {}
+
         for student in students:
             if os.path.exists(student.encoding_path):
                 try:
                     enc = np.load(student.encoding_path)
-                    self.known_encodings.append(enc)
-                    self.known_ids.append(student.id)
-                    self.student_names[student.id] = student.name
+                    # Ensure float64 for stable distance math
+                    enc = np.asarray(enc, dtype=np.float64)
+                    if enc.shape == (128,):
+                        self.known_encodings.append(enc)
+                        self.known_ids.append(student.id)
+                        self.student_names[student.id] = student.name
                 except Exception as e:
                     print(f"Error loading encoding for {student.name}: {e}")
 
-    # Build a student's face template from one or more images.
-    # For each image:
-    # - detect a face
-    # - compute a face encoding
-    # If multiple encodings are found, average them to make recognition more stable across conditions.
-    # Save the final encoding to disk and reload encodings so the student becomes recognizable immediately.
+        # Precompute matrix for fast vectorized distance
+        if self.known_encodings:
+            self._enc_matrix = np.vstack(self.known_encodings)  # (N,128)
+        else:
+            self._enc_matrix = None
+
     def register_faces(self, image_paths, name, roll_no):
         encodings = []
 
         for path in image_paths:
             try:
+                # Robust Windows decode (handles Unicode paths + odd JPEG variants)
                 data = np.fromfile(path, dtype=np.uint8)
                 bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
                 if bgr is None:
@@ -53,7 +74,6 @@ class FaceRecognizer:
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
 
-                print("DEBUG:", path, rgb.dtype, rgb.shape, rgb.flags["C_CONTIGUOUS"])
                 encs = face_recognition.face_encodings(rgb)
                 if encs:
                     encodings.append(encs[0])
@@ -72,57 +92,75 @@ class FaceRecognizer:
         np.save(save_path, avg_encoding)
         return save_path
 
+    def _should_run_heavy(self):
+        """Decide whether to run detection+encoding this call."""
+        self._frame_count += 1
 
+        # Run only every N frames
+        if self.process_every_n_frames > 1 and (self._frame_count % self.process_every_n_frames) != 0:
+            return False
 
-    # Detect and identify faces in a live frame.
-    # Steps:
-    # 1) Resize frame for speed (scale_factor).
-    # 2) Find face locations and compute encodings.
-    # 3) Compare each encoding to known encodings using distance.
-    # 4) Choose the closest match and accept it only if it is below the threshold.
-    # 5) Scale face box coordinates back to the original frame size for accurate drawing.
-    # Returns a list of (box coords, student_id, label) for UI overlay + attendance marking.
+        # Also cap calls per second to avoid CPU spikes / UI lag
+        now = time.time()
+        min_dt = 1.0 / max(1, int(self.max_fps_for_recognition))
+        if (now - self._last_run_time) < min_dt:
+            return False
+
+        self._last_run_time = now
+        return True
+
     def detect_and_identify(self, frame_rgb):
         """
-        Returns a list of tuples: (student_id, name, location_rect)
-        location_rect is (top, right, bottom, left)
+        Returns: list of (student_id, name, (top,right,bottom,left))
+        frame_rgb must be RGB uint8.
         """
-        # 1. Resize for speed
-        scale_factor = 0.25
-        small_frame = cv2.resize(frame_rgb, (0, 0), fx=scale_factor, fy=scale_factor)
+        if frame_rgb is None:
+            return []
 
-        # 2. Detect Faces
-        face_locations = face_recognition.face_locations(small_frame)
-        face_encodings = face_recognition.face_encodings(small_frame, face_locations)
+        # If we skip heavy compute, reuse last results (smooth UI, higher FPS)
+        if not self._should_run_heavy():
+            return self._last_results
+
+        # 1) Resize for speed
+        sf = float(self.scale_factor)
+        if sf <= 0 or sf >= 1:
+            sf = 0.20
+
+        small = cv2.resize(frame_rgb, (0, 0), fx=sf, fy=sf, interpolation=cv2.INTER_LINEAR)
+
+        # 2) Detect faces (HOG is fastest on CPU)
+        face_locations = face_recognition.face_locations(small, model=self.detect_model)
+
+        if not face_locations:
+            self._last_results = []
+            return self._last_results
+
+        # 3) Encode faces
+        face_encs = face_recognition.face_encodings(small, face_locations)
 
         results = []
-        for i, face_encoding in enumerate(face_encodings):
+        scale_back = int(round(1.0 / sf))
+
+        # 4) Identify each face (vectorized distance, same threshold behavior)
+        for i, face_encoding in enumerate(face_encs):
             student_id = None
             name = "Unknown"
 
-            # 3. Identify Faces
-            if self.known_encodings:
-                matches = face_recognition.compare_faces(
-                    self.known_encodings, face_encoding
-                )
-                face_distances = face_recognition.face_distance(
-                    self.known_encodings, face_encoding
-                )
+            if self._enc_matrix is not None and self._enc_matrix.size:
+                fe = np.asarray(face_encoding, dtype=np.float64)
+                # Euclidean distance: faster than calling face_recognition.face_distance repeatedly
+                diffs = self._enc_matrix - fe
+                dists = np.sqrt(np.sum(diffs * diffs, axis=1))
+                best_idx = int(np.argmin(dists))
+                best_dist = float(dists[best_idx])
 
-                if len(face_distances) > 0:
-                    best_match_index = np.argmin(face_distances)
-                    if (
-                        matches[best_match_index]
-                        and face_distances[best_match_index] < 0.5
-                    ):  # Threshold
-                        student_id = self.known_ids[best_match_index]
-                        name = self.student_names.get(student_id, "Unknown")
+                if best_dist < float(self.threshold):
+                    student_id = self.known_ids[best_idx]
+                    name = self.student_names.get(student_id, "Unknown")
 
-            # 4. Scale locations back up
             top, right, bottom, left = face_locations[i]
-            scale = int(1 / scale_factor)
-            loc = (top * scale, right * scale, bottom * scale, left * scale)
-
+            loc = (top * scale_back, right * scale_back, bottom * scale_back, left * scale_back)
             results.append((student_id, name, loc))
 
+        self._last_results = results
         return results

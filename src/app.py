@@ -1063,7 +1063,7 @@ class AutoAttendApp:
             if self.prev_frame_time > 0:
                 fps = 1 / (self.new_frame_time - self.prev_frame_time)
             self.prev_frame_time = self.new_frame_time
-            fps_text = f"FPS: {23}"
+            fps_text = f"FPS: {int(fps)}"
 
             dets = self.vision.detect_and_identify(frame)
             draw = frame.copy()
