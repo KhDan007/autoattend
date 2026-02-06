@@ -17,6 +17,8 @@ class AutoAttendApp:
 
         self.prev_frame_time = 0
         self.new_frame_time = 0
+        self.fps_running = False
+        self.last_fps_text = "FPS: 0"
 
         self.db = DatabaseManager()
         self.camera = CameraManager()
@@ -1002,9 +1004,15 @@ class AutoAttendApp:
             self.btn_start['state'] = 'disabled'
             self.btn_stop['state'] = 'normal'
             self.is_session_active = True
+
+            # FPS resumes
+            self.fps_running = True
+            self.prev_frame_time = 0
+
             self.lbl_status.config(text="Status: Active Session", foreground="green")
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
 
     def refresh_att_list(self):
         for i in self.tree_att.get_children(): self.tree_att.delete(i)
@@ -1029,7 +1037,12 @@ class AutoAttendApp:
     def stop_camera(self):
         if hasattr(self, 'camera'):
             self.camera.stop()
+
         self.is_session_active = False
+
+        # Freeze FPS
+        self.fps_running = False
+
         try:
             if hasattr(self, 'btn_start') and self.btn_start.winfo_exists():
                 self.btn_start['state'] = 'normal'
@@ -1037,10 +1050,9 @@ class AutoAttendApp:
                 self.btn_stop['state'] = 'disabled'
             if hasattr(self, 'lbl_status') and self.lbl_status.winfo_exists():
                 self.lbl_status.config(text="Status: Paused", foreground="orange")
-            if hasattr(self, 'video_label') and self.video_label.winfo_exists():
-                self.video_label.configure(image=self.video_label.image)
         except Exception:
             pass
+
 
     # Main UI loop for live video processing (runs repeatedly via root.after()).
     # Each cycle:
@@ -1058,11 +1070,16 @@ class AutoAttendApp:
         frame = self.camera.get_frame()
         if frame is not None:
             # FPS Calculation
-            self.new_frame_time = time.time()
+            fps_text = self.last_fps_text
+
             fps = 0
-            if self.prev_frame_time > 0:
-                fps = 1 / (self.new_frame_time - self.prev_frame_time)
-            self.prev_frame_time = self.new_frame_time
+            if self.fps_running:
+                self.new_frame_time = time.time()
+                if self.prev_frame_time > 0:
+                    fps = 1 / (self.new_frame_time - self.prev_frame_time)
+                    fps_text = f"FPS: {int(fps)}"
+                    self.last_fps_text = fps_text
+                self.prev_frame_time = self.new_frame_time
             fps_text = f"FPS: {int(fps)}"
 
             dets = self.vision.detect_and_identify(frame)

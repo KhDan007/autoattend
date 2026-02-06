@@ -30,7 +30,7 @@ class FaceRecognizer:
         self._frame_count = 0
         self._last_results = []
         self._last_run_time = 0.0
-
+        
         # Precomputed matrix for fast distance calculation
         self._enc_matrix = None  # shape: (N, 128)
 
