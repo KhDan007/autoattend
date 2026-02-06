@@ -41,22 +41,38 @@ class FaceRecognizer:
     # Save the final encoding to disk and reload encodings so the student becomes recognizable immediately.
     def register_faces(self, image_paths, name, roll_no):
         encodings = []
+
         for path in image_paths:
             try:
-                img = face_recognition.load_image_file(path)
-                encs = face_recognition.face_encodings(img)
+                data = np.fromfile(path, dtype=np.uint8)
+                bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
+                if bgr is None:
+                    print(f"Skipping file {path}: OpenCV could not decode image")
+                    continue
+
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+
+                print("DEBUG:", path, rgb.dtype, rgb.shape, rgb.flags["C_CONTIGUOUS"])
+                encs = face_recognition.face_encodings(rgb)
                 if encs:
                     encodings.append(encs[0])
+                else:
+                    print(f"Skipping file {path}: No face found")
+
             except Exception as e:
                 print(f"Skipping file {path}: {e}")
 
         if not encodings:
             return None
+
         avg_encoding = np.mean(encodings, axis=0)
         filename = f"{roll_no}_{name.replace(' ', '_')}.npy"
         save_path = os.path.join(self.encoding_dir, filename)
         np.save(save_path, avg_encoding)
         return save_path
+
+
 
     # Detect and identify faces in a live frame.
     # Steps:

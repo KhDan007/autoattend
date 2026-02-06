@@ -483,59 +483,64 @@ class AutoAttendApp:
 
     def admin_link_existing_student(self):
         if not self.admin_sel_group_id:
-            messagebox.showwarning("Select Group", "Please select a target group first.")
+            self._msg("warning", "Select Group", "Please select a target group first.")
             return
-        
+
         all_students = self.db.get_all_students()
         candidates = [s for s in all_students if s.group_id != self.admin_sel_group_id]
-        
+
         if not candidates:
-            messagebox.showinfo("Info", "No students found in other groups.")
+            self._msg("info", "Info", "No students found in other groups.")
             return
 
         top = tk.Toplevel(self.root)
         top.title("Add Existing Student")
-        top.geometry("450x350")
-        
+        top.resizable(False, False)
+        top.withdraw()
+
         ttk.Label(top, text="Select Student:", font=("Helvetica", 10, "bold")).pack(pady=10)
-        
+
         cols = ("name", "roll", "current_grp")
         tree = ttk.Treeview(top, columns=cols, show="headings")
         tree.heading("name", text="Name")
         tree.heading("roll", text="ID")
         tree.heading("current_grp", text="Current Group")
-        tree.column("roll", width=50)
+        tree.column("roll", width=70, anchor="center")
         tree.pack(fill="both", expand=True, padx=10, pady=5)
-        
+
         for s in candidates:
             tree.insert("", "end", iid=s.id, values=(s.name, s.roll_number, s.group_name))
-            
+
         btn_frame = ttk.Frame(top)
         btn_frame.pack(pady=15)
-        
+
         def perform_action(action_type):
             sel = tree.selection()
-            if not sel: return
+            if not sel:
+                return
             student_id = int(sel[0])
-            success = False
-            
+
             if action_type == "COPY":
                 success = self.db.copy_student_to_group(student_id, self.admin_sel_group_id)
-            elif action_type == "MOVE":
+            else:
                 success = self.db.move_student_to_group(student_id, self.admin_sel_group_id)
-                
+
             if success:
                 self.refresh_student_list_for_group()
                 self.load_global_data()
                 top.destroy()
             else:
-                self._msg("error", "Error", "Group exists or invalid.")
+                self._msg("error", "Error", "Operation failed (check for duplicates).", parent=top)
 
-        btn_copy = tk.Button(btn_frame, text="✚ Copy to Group", bg="#E8F5E9", command=lambda: perform_action("COPY"))
-        btn_copy.pack(side="left", padx=10)
-        
-        btn_move = tk.Button(btn_frame, text="➜ Transfer / Move", bg="#FFF3E0", command=lambda: perform_action("MOVE"))
-        btn_move.pack(side="left", padx=10)
+        tk.Button(btn_frame, text="✚ Copy to Group", bg="#E8F5E9",
+                command=lambda: perform_action("COPY")).pack(side="left", padx=10)
+        tk.Button(btn_frame, text="➜ Transfer / Move", bg="#FFF3E0",
+                command=lambda: perform_action("MOVE")).pack(side="left", padx=10)
+
+        # Center + modal after all widgets are packed
+        top.update_idletasks()
+        self._prepare_popup(top, 520, 420, modal=True)
+
 
     # Register face images for the selected student.
     # 1) Ensure a student row is selected.
