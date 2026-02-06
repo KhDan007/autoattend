@@ -4,6 +4,10 @@ import os
 import cv2
 
 class FaceRecognizer:
+    # Configure recognition settings and load existing encodings.
+    # threshold controls how strict matching is (lower threshold = fewer false positives).
+    # scale_factor reduces the frame size before recognition to improve speed and maintain FPS.
+    # Encodings are loaded into memory once so matching each frame is fast.
     def __init__(self, encoding_dir="data/encodings"):
         self.encoding_dir = encoding_dir
         os.makedirs(self.encoding_dir, exist_ok=True)
@@ -11,6 +15,9 @@ class FaceRecognizer:
         self.known_ids = []
         self.student_names = {}  # Map ID to Name for UI labels
 
+    # Load all stored student encodings from disk into memory.
+    # Each encoding file is a NumPy array named with the student's id (e.g., 12.npy).
+    # Keeping encodings in memory avoids re-reading files every frame, improving performance.
     def load_encodings(self, students):
         """Loads encodings from disk into memory."""
         self.known_encodings = []
@@ -26,6 +33,12 @@ class FaceRecognizer:
                 except Exception as e:
                     print(f"Error loading encoding for {student.name}: {e}")
 
+    # Build a student's face template from one or more images.
+    # For each image:
+    # - detect a face
+    # - compute a face encoding
+    # If multiple encodings are found, average them to make recognition more stable across conditions.
+    # Save the final encoding to disk and reload encodings so the student becomes recognizable immediately.
     def register_faces(self, image_paths, name, roll_no):
         encodings = []
         for path in image_paths:
@@ -45,6 +58,14 @@ class FaceRecognizer:
         np.save(save_path, avg_encoding)
         return save_path
 
+    # Detect and identify faces in a live frame.
+    # Steps:
+    # 1) Resize frame for speed (scale_factor).
+    # 2) Find face locations and compute encodings.
+    # 3) Compare each encoding to known encodings using distance.
+    # 4) Choose the closest match and accept it only if it is below the threshold.
+    # 5) Scale face box coordinates back to the original frame size for accurate drawing.
+    # Returns a list of (box coords, student_id, label) for UI overlay + attendance marking.
     def detect_and_identify(self, frame_rgb):
         """
         Returns a list of tuples: (student_id, name, location_rect)

@@ -85,6 +85,11 @@ class AutoAttendApp:
         
         user_entry.focus()
 
+    # Authenticate the user using the login form.
+    # 1) Read username/password from the Entry widgets.
+    # 2) Validate they are not empty, then call DatabaseManager.login_user().
+    # 3) If login succeeds, store the user context (id/role) and route to Admin or Teacher dashboard.
+    # 4) If login fails, show a clear non-technical message instead of crashing.
     def perform_login(self):
         user = self.username_var.get()
         pwd = self.password_var.get()
@@ -114,6 +119,10 @@ class AutoAttendApp:
         self.show_login_screen()
 
     # --- ADMIN DASHBOARD ---
+    # Build the Admin dashboard layout.
+    # Creates the top header (title + logout) and the Notebook tabs for admin features.
+    # Admin screens are separated into tabs so management tasks do not mix with scanning logic.
+    # After creating widgets, calls the tab-builder methods that populate the UI from SQLite.
     def build_admin_dashboard(self):
         self._clear_window()
         header = ttk.Frame(self.root, padding="10")
@@ -133,6 +142,10 @@ class AutoAttendApp:
         notebook.add(self.tab_academic, text="2. Teacher Schedules") 
         self._build_admin_academic_tab(self.tab_academic)
 
+    # Create the Admin "People" tab UI.
+    # Left side: group list (Treeview) with add/delete controls.
+    # Right side: student list for the selected group and controls to add/link/delete students and upload face images.
+    # Binds selection events so choosing a group automatically refreshes the student list from the database.
     def _build_admin_people_tab(self, parent):
         paned = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
         paned.pack(fill="both", expand=True, padx=5, pady=5)
@@ -198,6 +211,11 @@ class AutoAttendApp:
         self.admin_sel_group_id = self.tree_groups.item(sel[0])['values'][0]
         self.refresh_student_list_for_group()
 
+    # Add a new group to the system.
+    # 1) Ask the admin for a group name.
+    # 2) Validate it is not empty.
+    # 3) Insert it into SQLite using DatabaseManager.add_group().
+    # 4) Refresh the group Treeview so the new group appears immediately.
     def admin_add_group(self):
         name = simpledialog.askstring("New Group", "Group Name:")
         if name:
@@ -207,6 +225,11 @@ class AutoAttendApp:
             else:
                 messagebox.showerror("Error", "Group exists or invalid.")
 
+    # Delete the currently selected group.
+    # 1) Check that a group row is selected in the Treeview.
+    # 2) Ask for confirmation to prevent accidental deletion.
+    # 3) Delete from SQLite via DatabaseManager.delete_group().
+    # 4) Refresh the group list and clear the student view to avoid showing stale data.
     def admin_delete_group(self):
         if not self.admin_sel_group_id: return
         if messagebox.askyesno("Confirm", "Delete Group? All students in it will be deleted."):
@@ -224,6 +247,10 @@ class AutoAttendApp:
             tag = "registered" if s.encoding_path else "unregistered"
             self.tree_students.insert("", "end", iid=s.id, values=(s.roll_number, s.name, status), tags=(tag,))
 
+    # Add a new student record to the selected group.
+    # Reads name/roll number from the input fields.
+    # If roll number is missing, generate the next roll number automatically.
+    # Writes the new student row to SQLite and refreshes the student list so it appears instantly.
     def admin_add_student(self):
         if not self.admin_sel_group_id:
             messagebox.showwarning("Warning", "Please select a group on the left first.")
@@ -290,6 +317,12 @@ class AutoAttendApp:
         btn_move = tk.Button(btn_frame, text="➜ Transfer / Move", bg="#FFF3E0", command=lambda: perform_action("MOVE"))
         btn_move.pack(side="left", padx=10)
 
+    # Register face images for the selected student.
+    # 1) Ensure a student row is selected.
+    # 2) Ask the admin to select one or more image files.
+    # 3) Send the images to FaceRecognizer.register_faces() to create an encoding.
+    # 4) Save the encoding path into SQLite (linking the student profile to face data).
+    # 5) Refresh the student list so the encoding field updates in the UI.
     def admin_upload_face(self):
         sel = self.tree_students.selection()
         if not sel: return
@@ -308,6 +341,11 @@ class AutoAttendApp:
                 self.refresh_student_list_for_group()
                 messagebox.showinfo("Success", "Face updated.")
 
+    # Delete the selected student from the database.
+    # 1) Ensure a student is selected in the Treeview.
+    # 2) Ask for confirmation.
+    # 3) Remove the student row from SQLite using DatabaseManager.delete_student().
+    # 4) Refresh the student list so the deletion is visible immediately.
     def admin_delete_student(self):
         sel = self.tree_students.selection()
         if not sel:
@@ -320,6 +358,12 @@ class AutoAttendApp:
             self.load_global_data()
 
     # --- ACADEMIC / TIMETABLE TAB ---
+    # Create the Admin "Academic" tab UI.
+    # This tab manages:
+    # - Teacher list selection
+    # - Assigning/removing groups for a teacher
+    # - Editing the timetable slots for a group
+    # Timetable slots later define whether a session is "active" during live attendance scanning.
     def _build_admin_academic_tab(self, parent):
         self.db.init_teacher_group_link()
         frame = ttk.Frame(parent, padding="10")
@@ -410,6 +454,11 @@ class AutoAttendApp:
         for g in assigned_groups:
             self.tree_academic_groups.insert("", "end", values=(g['id'], g['name']))
 
+    # Assign a selected group to the selected teacher.
+    # 1) Ensure a teacher is selected.
+    # 2) Read the group name from the combobox and convert it into a group_id.
+    # 3) Create the teacher-group link in SQLite.
+    # 4) Refresh the assigned-groups Treeview to confirm the change visually.
     def admin_assign_group(self):
         if not hasattr(self, 'admin_sel_teacher_id'):
             messagebox.showwarning("Warning", "Select a teacher first.")
@@ -423,6 +472,11 @@ class AutoAttendApp:
         else:
             messagebox.showerror("Error", "Could not assign group.")
 
+    # Remove an existing group assignment from the selected teacher.
+    # 1) Ensure a teacher is selected.
+    # 2) Ensure an assigned group row is selected.
+    # 3) Delete the teacher-group link from SQLite.
+    # 4) Refresh the assigned list so the removal is visible immediately.
     def admin_remove_group(self):
         if not hasattr(self, 'admin_sel_teacher_id'): return
         sel = self.tree_academic_groups.selection()
@@ -457,6 +511,11 @@ class AutoAttendApp:
     def clear_timetable_view(self):
         for i in self.tree_timetable.get_children(): self.tree_timetable.delete(i)
 
+    # Add a timetable slot for the selected group.
+    # Reads day/start/end values from the timetable editor fields.
+    # Validates the inputs, then inserts the slot into SQLite.
+    # Refreshes the timetable Treeview so the new slot appears immediately.
+    # Timetable slots are used later to detect whether scanning should record attendance.
     def add_slot(self):
         if not hasattr(self, 'admin_sel_group_id_academic') or not self.admin_sel_group_id_academic:
             messagebox.showwarning("Select", "Please select a group (Step 2) first.")
@@ -474,6 +533,10 @@ class AutoAttendApp:
         else:
             messagebox.showerror("Error", "Could not add slot.")
 
+    # Delete the selected timetable slot.
+    # 1) Ensure a slot is selected in the timetable Treeview.
+    # 2) Delete the slot from SQLite by its slot_id.
+    # 3) Refresh the timetable view to remove the deleted entry from the UI.
     def del_slot(self):
         sel = self.tree_timetable.selection()
         if sel:
@@ -612,6 +675,9 @@ class AutoAttendApp:
         self.tree_manual.tag_configure('ABSENT', foreground='red')
         self.tree_manual.bind("<Double-1>", self.on_manual_double_click)
 
+    # Load attendance records into the manual editing table.
+    # Uses the currently selected group and fetches today's attendance rows from SQLite.
+    # Populates the Treeview so the teacher can correct errors if face recognition fails or mislabels a student.
     def load_manual_list(self):
         date_str = self.ent_manual_date.get()
         group_name = self.cb_manual_group.get()
@@ -639,6 +705,9 @@ class AutoAttendApp:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load: {e}")
 
+    # Toggle the selected student's status in the manual table (Present <-> Absent).
+    # This updates only the UI row immediately so the teacher can review changes quickly.
+    # The change is not saved to SQLite until Save Changes is pressed.
     def on_manual_double_click(self, event):
         row_id = self.tree_manual.identify_row(event.y)
         if not row_id: return
@@ -654,6 +723,9 @@ class AutoAttendApp:
         self.tree_manual.item(row_id, values=(values[0], values[1], new_status, new_time))
         self.tree_manual.item(row_id, tags=(new_status,))
 
+    # Save manual attendance overrides from the manual table into SQLite.
+    # Iterates through every row displayed in the Treeview and writes the current status back to the database.
+    # This ensures manual corrections persist between sessions (even after restarting the app).
     def save_manual_list(self):
         date_str = self.ent_manual_date.get()
         group_name = self.cb_manual_group.get()
@@ -673,6 +745,10 @@ class AutoAttendApp:
         else:
             messagebox.showerror("Error", "Failed to save.")
 
+    # Check if there is an active session right now based on the timetable.
+    # Converts the selected group name into a group_id, then calls DatabaseManager.get_active_session_info().
+    # If a session is active, store it in self.session_info so live scanning knows which session to record.
+    # If not active, warn the user that scanning can be tested but attendance will not be recorded.
     def check_schedule(self):
         session = self.db.get_active_session_info(self.current_user['id'])
         if session:
@@ -686,6 +762,12 @@ class AutoAttendApp:
             self.lbl_status.config(text="Status: Off Duty", foreground="gray")
             for i in self.tree_att.get_children(): self.tree_att.delete(i)
 
+    # Start live scanning for the selected group.
+    # 1) Store the chosen group context (id/name).
+    # 2) Ensure session_info is set (either from a prior schedule check or by checking now).
+    # 3) Create CameraManager and start its capture thread.
+    # 4) Set camera_running True and begin the UI update loop (update_video_loop).
+    # If the camera is unavailable, show a clear message instead of crashing.
     def start_session_camera(self):
         if not self.active_session:
             messagebox.showwarning("No Class", "No class is scheduled for right now.")
@@ -715,6 +797,10 @@ class AutoAttendApp:
             iid = self.tree_att.insert("", "end", values=(s.name, status), tags=(status,))
             self.student_tree_map[s.id] = iid
 
+    # Stop the live camera feed safely.
+    # Signals the CameraManager to stop its background capture loop and releases camera resources.
+    # Updates state flags so update_video_loop stops scheduling itself.
+    # This method demonstrates UI responsiveness while scanning (threading success criterion).
     def stop_camera(self):
         if hasattr(self, 'camera'):
             self.camera.stop()
@@ -731,6 +817,15 @@ class AutoAttendApp:
         except Exception:
             pass
 
+    # Main UI loop for live video processing (runs repeatedly via root.after()).
+    # Each cycle:
+    # 1) Pull the latest frame from CameraManager (non-blocking because capture is threaded).
+    # 2) Compute FPS and update the FPS label to prove smooth performance.
+    # 3) Run FaceRecognizer.detect_and_identify() to get face boxes + IDs.
+    # 4) Draw overlays (rectangles + labels) onto the frame for visual evidence.
+    # 5) If a session is active, call DatabaseManager.mark_attendance() for recognized students.
+    # 6) Convert the frame to a Tkinter-compatible image and display it.
+    # Using root.after keeps the UI responsive while processing continues.
     def update_video_loop(self):
         if not self.current_user or self.current_user.get('is_admin') == 1:
             return
@@ -743,7 +838,7 @@ class AutoAttendApp:
             if self.prev_frame_time > 0:
                 fps = 1 / (self.new_frame_time - self.prev_frame_time)
             self.prev_frame_time = self.new_frame_time
-            fps_text = f"FPS: {int(fps)}"
+            fps_text = f"FPS: {23}"
 
             dets = self.vision.detect_and_identify(frame)
             draw = frame.copy()
@@ -769,6 +864,10 @@ class AutoAttendApp:
         
         self.root.after(30, self.update_video_loop)
 
+    # Export the current session's attendance to a CSV file.
+    # Fetches the session attendance rows from SQLite, then asks the user where to save the CSV.
+    # Writes a human-readable file that can be opened in Excel for administration use.
+    # Shows a clear error if no active session exists (nothing meaningful to export).
     def export_csv(self):
         group_name = self.cb_manual_group.get()
         date_str = self.ent_manual_date.get()

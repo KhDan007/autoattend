@@ -1,3 +1,7 @@
+# Dataclasses used as lightweight data containers.
+# These represent common entities (Group, Student, TimetableSlot) and make it easier
+# to pass structured data between the database layer and the UI without manual dict handling.
+
 from dataclasses import dataclass
 from typing import Optional
 

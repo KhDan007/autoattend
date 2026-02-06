@@ -11,6 +11,15 @@ class DatabaseManager:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
+    # Initialize the SQLite database schema if it does not exist.
+    # Creates all required tables for:
+    # - users (accounts + admin role)
+    # - groups (class/group definitions)
+    # - students (profiles + face encoding file reference)
+    # - teacher_groups (many-to-many teacher assignments)
+    # - timetable (schedule slots)
+    # - attendance (session logs, unique per student per session)
+    # Runs on startup so the application is always ready to store persistent data.
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -100,6 +109,10 @@ class DatabaseManager:
         conn.close()
 
     # --- Authentication ---
+    # Hash a password before storing it.
+    # This prevents saving plaintext passwords in the database.
+    # During login, the entered password is hashed the same way and compared to the stored hash.
+    # (Note: if you later add a salt, you must store it and apply it consistently during verification.)
     def _hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
 
@@ -118,6 +131,11 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    # Verify login credentials.
+    # 1) Look up the user row by username.
+    # 2) Hash the entered password and compare it to password_hash in SQLite.
+    # 3) If correct, return a small dict containing the user id/username and is_admin flag.
+    # 4) If incorrect, return None so the UI can show a clear error message.
     def login_user(self, username, password):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -376,6 +394,9 @@ class DatabaseManager:
             for r in rows
         ]
 
+    # Mark a student present for the specific session window (date + start/end time).
+    # Uses a UNIQUE constraint to prevent duplicate inserts while the camera runs for many frames.
+    # If the row already exists, the insert fails safely and the method returns False (no duplicate log created).
     def mark_attendance(self, student_id, group_id):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -492,6 +513,10 @@ class DatabaseManager:
             
         return att_data
     
+    # Save a teacher's manual correction (Present/Absent) into SQLite.
+    # If an attendance row exists for the student today, update its status.
+    # If no row exists, create a new manual-only record so the correction is still saved.
+    # This supports the success criterion that manual edits persist between sessions.
     def save_manual_attendance(self, group_id, date_str, att_map):
         """
         Saves attendance manually.
