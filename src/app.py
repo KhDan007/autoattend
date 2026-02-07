@@ -54,6 +54,172 @@ class AutoAttendApp:
     def _clear_window(self):
         for widget in self.root.winfo_children():
             widget.destroy()
+    
+    def _center_window(self, win, width=None, height=None):
+        win.update_idletasks()
+
+        if width is None:
+            width = win.winfo_width()
+        if height is None:
+            height = win.winfo_height()
+
+        # If this is a popup, center relative to the main window (works on the correct monitor)
+        if win is not self.root:
+            self.root.update_idletasks()
+
+            root_w = self.root.winfo_width()
+            root_h = self.root.winfo_height()
+            root_x = self.root.winfo_rootx()
+            root_y = self.root.winfo_rooty()
+
+            x = root_x + (root_w - width) // 2
+            y = root_y + (root_h - height) // 2
+        else:
+            # Root window: center on screen
+            screen_w = win.winfo_screenwidth()
+            screen_h = win.winfo_screenheight()
+            x = (screen_w - width) // 2
+            y = (screen_h - height) // 2
+
+        win.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _prepare_popup(self, win, width=None, height=None, modal=True, topmost_flash=True):
+        # Hide while we compute geometry (prevents Windows from "re-placing" it)
+        win.withdraw()
+
+        try:
+            win.transient(self.root)
+        except Exception:
+            pass
+
+        if width and height:
+            win.geometry(f"{width}x{height}")
+
+        # Force the window manager to compute sizes/positions
+        self.root.update_idletasks()
+        win.update_idletasks()
+
+        # Center relative to main window
+        self._center_window(win, width, height)
+
+        # Show after placing
+        win.deiconify()
+        win.update_idletasks()
+
+        if modal:
+            try:
+                win.grab_set()
+            except Exception:
+                pass
+
+        try:
+            win.lift()
+            win.focus_force()
+        except Exception:
+            pass
+
+        if topmost_flash:
+            try:
+                win.attributes("-topmost", True)
+                win.after(150, lambda: win.attributes("-topmost", False))
+            except Exception:
+                pass
+
+
+    def _askstring(self, title, prompt, show=None, width=520, height=240):
+        """
+        Replacement for simpledialog.askstring with consistent size + centering + focus.
+        Returns string or None.
+        """
+        top = tk.Toplevel(self.root)
+        top.title(title)
+        top.resizable(False, False)
+        self._prepare_popup(top, width, height, modal=True)
+
+        frm = ttk.Frame(top, padding=20)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text=prompt).pack(anchor="w", pady=(0, 10))
+
+        var = tk.StringVar()
+        ent = ttk.Entry(frm, textvariable=var, show=show or "")
+        ent.pack(fill="x", pady=(0, 15))
+        ent.focus_set()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+
+        result = {"value": None}
+
+        def ok():
+            text = var.get().strip()
+            if not text:
+                result["value"] = None
+            else:
+                result["value"] = text
+            top.destroy()
+
+        def cancel():
+            result["value"] = None
+            top.destroy()
+
+        ttk.Button(btns, text="Cancel", command=cancel).pack(side="right")
+        ttk.Button(btns, text="OK", command=ok).pack(side="right", padx=(0, 10))
+
+        top.bind("<Return>", lambda e: ok())
+        top.bind("<Escape>", lambda e: cancel())
+
+        # Wait for dialog to close (modal)
+        top.wait_window()
+        return result["value"]
+
+    def _msg(self, kind, title, message, parent=None):
+        """
+        Messagebox wrapper that keeps dialogs centered/on-top by parenting them.
+        kind: "info" | "warning" | "error" | "askyesno"
+        """
+        parent = parent or self.root
+        if kind == "info":
+            return messagebox.showinfo(title, message, parent=parent)
+        if kind == "warning":
+            return messagebox.showwarning(title, message, parent=parent)
+        if kind == "error":
+            return messagebox.showerror(title, message, parent=parent)
+        if kind == "askyesno":
+            return messagebox.askyesno(title, message, parent=parent)
+        raise ValueError("Unknown messagebox kind")
+
+    def _open_files(self, title, filetypes):
+        """
+        File dialog wrapper: forces focus + parenting so it doesn't appear behind windows.
+        """
+        try:
+            self.root.lift()
+            self.root.focus_force()
+            self.root.attributes("-topmost", True)
+            self.root.after(150, lambda: self.root.attributes("-topmost", False))
+        except Exception:
+            pass
+        return filedialog.askopenfilenames(parent=self.root, title=title, filetypes=filetypes)
+
+    def _save_file(self, defaultextension, initialfile, filetypes):
+        """
+        Save dialog wrapper: forces focus + parenting so it doesn't appear behind windows.
+        """
+        try:
+            self.root.lift()
+            self.root.focus_force()
+            self.root.attributes("-topmost", True)
+            self.root.after(150, lambda: self.root.attributes("-topmost", False))
+        except Exception:
+            pass
+        return filedialog.asksaveasfilename(
+            parent=self.root,
+            defaultextension=defaultextension,
+            initialfile=initialfile,
+            filetypes=filetypes,
+        )
+
 
     # --- LOGIN & AUTH ---
     def show_login_screen(self):
@@ -68,13 +234,13 @@ class AutoAttendApp:
         ttk.Label(login_frame, text="Username:").pack(anchor="w")
         self.username_var = tk.StringVar()
         user_entry = ttk.Entry(login_frame, textvariable=self.username_var, width=30)
-        user_entry.pack(pady=5)
+        user_entry.pack(pady=5, anchor="w", fill="x")
         user_entry.bind("<Return>", lambda event: self.perform_login())
         
         ttk.Label(login_frame, text="Password:").pack(anchor="w")
         self.password_var = tk.StringVar()
         pass_entry = ttk.Entry(login_frame, textvariable=self.password_var, show="*", width=30)
-        pass_entry.pack(pady=5)
+        pass_entry.pack(pady=5, anchor="w", fill="x")
         pass_entry.bind("<Return>", lambda event: self.perform_login())
         
         btn_frame = ttk.Frame(login_frame)
@@ -105,12 +271,66 @@ class AutoAttendApp:
             messagebox.showerror("Login Failed", "Invalid credentials")
 
     def register_teacher_popup(self):
-        username = simpledialog.askstring("Register", "Username:")
-        if not username: return
-        password = simpledialog.askstring("Register", "Password:", show="*")
-        if not password: return
-        fullname = simpledialog.askstring("Register", "Full Name:")
-        self.db.register_user(username, password, fullname)
+        top = tk.Toplevel(self.root)
+        top.title("Register Teacher")
+        top.geometry("520x320")          # bigger
+        top.resizable(False, False)
+
+        # modal + on top of the app
+        self._prepare_popup(top, 520, 320, modal=True)
+
+        frm = ttk.Frame(top, padding=20)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Register Teacher", style="Title.TLabel").pack(anchor="w", pady=(0, 15))
+
+        # Username
+        ttk.Label(frm, text="Username:").pack(anchor="w")
+        username_var = tk.StringVar()
+        username_entry = ttk.Entry(frm, textvariable=username_var)
+        username_entry.pack(fill="x", pady=(5, 12))
+        username_entry.focus_set()
+
+        # Password
+        ttk.Label(frm, text="Password:").pack(anchor="w")
+        password_var = tk.StringVar()
+        password_entry = ttk.Entry(frm, textvariable=password_var, show="*")
+        password_entry.pack(fill="x", pady=(5, 12))
+
+        # Full name
+        ttk.Label(frm, text="Full name:").pack(anchor="w")
+        fullname_var = tk.StringVar()
+        fullname_entry = ttk.Entry(frm, textvariable=fullname_var)
+        fullname_entry.pack(fill="x", pady=(5, 12))
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(10, 0))
+
+        def submit():
+            username = username_var.get().strip()
+            password = password_var.get().strip()
+            fullname = fullname_var.get().strip()
+
+            if not username or not password or not fullname:
+                messagebox.showwarning("Missing info", "Please fill in all fields.", parent=top)
+                return
+
+            self.db.register_user(username, password, fullname)
+            top.destroy()
+
+        def cancel():
+            top.destroy()
+
+        ttk.Button(btns, text="Cancel", command=cancel).pack(side="right")
+        ttk.Button(btns, text="Submit", command=submit).pack(side="right", padx=(0, 10))
+
+        top.bind("<Return>", lambda e: submit())
+        top.bind("<Escape>", lambda e: cancel())
+
+        # Optional: extra Windows reliability if it still goes behind something
+        # top.attributes("-topmost", True)
+        # top.after(200, lambda: top.attributes("-topmost", False))
+
 
     def logout(self):
         self.stop_camera()
@@ -217,7 +437,7 @@ class AutoAttendApp:
     # 3) Insert it into SQLite using DatabaseManager.add_group().
     # 4) Refresh the group Treeview so the new group appears immediately.
     def admin_add_group(self):
-        name = simpledialog.askstring("New Group", "Group Name:")
+        name = self._askstring("New Group", "Group Name:", width=520, height=240)
         if name:
             if self.db.add_group(name):
                 self.refresh_group_list()
@@ -253,10 +473,10 @@ class AutoAttendApp:
     # Writes the new student row to SQLite and refreshes the student list so it appears instantly.
     def admin_add_student(self):
         if not self.admin_sel_group_id:
-            messagebox.showwarning("Warning", "Please select a group on the left first.")
+            self._msg("warning", "Warning", "Please select a group on the left first.")
             return
         next_roll = self.db.generate_next_roll_number()
-        name = simpledialog.askstring("Add Student", f"Auto-ID: {next_roll}\nName:")
+        name = self._askstring("Add Student", f"Auto-ID: {next_roll}\nName:", width=560, height=260)
         if name:
             if self.db.add_student(name, next_roll, self.admin_sel_group_id):
                 self.refresh_student_list_for_group()
@@ -309,7 +529,7 @@ class AutoAttendApp:
                 self.load_global_data()
                 top.destroy()
             else:
-                messagebox.showerror("Error", "Operation failed (Check if ID is unique).")
+                self._msg("error", "Error", "Group exists or invalid.")
 
         btn_copy = tk.Button(btn_frame, text="✚ Copy to Group", bg="#E8F5E9", command=lambda: perform_action("COPY"))
         btn_copy.pack(side="left", padx=10)
@@ -349,7 +569,7 @@ class AutoAttendApp:
     def admin_delete_student(self):
         sel = self.tree_students.selection()
         if not sel:
-            messagebox.showwarning("Selection", "Please select a student to remove.")
+            self._msg("warning", "Warning", "Please select a group on the left first.")
             return
         student_id = sel[0]
         if messagebox.askyesno("Confirm", "Remove this student from the group?"):
