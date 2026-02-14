@@ -1,6 +1,3 @@
-Here’s your fully formatted `README.md` content ready to copy-paste, with **all emojis removed**, and the **Project Structure** and **Verify Camera Access** sections removed, keeping everything else intact:
-
-````markdown
 # AutoAttend – Face Recognition Attendance System
 
 AutoAttend is a desktop attendance system that uses real-time face recognition to automatically mark students as present during a session.  
