@@ -103,12 +103,6 @@ Install required packages:
 
 ```bash
 pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-If you do not have a `requirements.txt`, install manually:
-
-```bash
 pip install numpy==1.26.4
 pip install opencv-python
 python -m pip install dlib-19.24.1-cp311-cp311-win_amd64.whl
