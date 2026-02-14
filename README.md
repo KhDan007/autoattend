@@ -29,7 +29,7 @@ The system uses:
 ## System Requirements (Windows)
 
 - Windows 10 or Windows 11 (64-bit)
-- Python 3.10 or 3.11 (64-bit recommended)
+- Python 3.11 (64-bit recommended)
 - Webcam
 - NVIDIA GPU (optional, not required)
 
@@ -39,7 +39,7 @@ Do NOT use Python 3.12 (dlib compatibility issues)
 
 ## Step 1 – Install Python
 
-1. Download Python 3.10 or 3.11 from:  
+1. Download Python 3.11 from:  
    [https://www.python.org/downloads/](https://www.python.org/downloads/)
 2. During installation:
    - Check **"Add Python to PATH"**
@@ -53,7 +53,7 @@ python --version
 It should return something like:
 
 ```text
-Python 3.10.x
+Python 3.11.x
 ```
 
 ---
@@ -111,6 +111,7 @@ If you do not have a `requirements.txt`, install manually:
 ```bash
 pip install numpy==1.26.4
 pip install opencv-python
+python -m pip install dlib-19.24.1-cp311-cp311-win_amd64.whl
 pip install face_recognition
 pip install pillow
 ```
@@ -126,7 +127,7 @@ pip install numpy>=2
 * If installation fails for `face_recognition`, ensure:
 
   * Python is 64-bit
-  * You are using Python 3.10 or 3.11
+  * You are using Python 3.11
 
 ---
 
@@ -205,7 +206,7 @@ pip install numpy>=2
 
 Ensure:
 
-* Python 3.10 or 3.11
+* Python 3.11
 * 64-bit Python
 * Updated pip
 
