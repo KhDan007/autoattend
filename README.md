@@ -139,7 +139,7 @@ The GUI should launch.
 
 ## First-Time Setup (Inside the App)
 
-1. Log in as admin
+1. Log in as admin (login: admin, password: admin)
 2. Add students to the system
 3. Register student faces (upload clear frontal images)
 4. Start a session
