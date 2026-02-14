@@ -130,7 +130,7 @@ pip install numpy>=2
 From the project root:
 
 ```bash
-python src/app.py
+python main.py
 ```
 
 The GUI should launch.
